@@ -1,0 +1,162 @@
+[
+  {
+    "id": "cube-shelf-2x4",
+    "file": "cube-shelf-2x4.glb",
+    "width": 0.7699999809265137,
+    "depth": 0.38999998569488525,
+    "height": 1.4700000286102295,
+    "bytes": 30996
+  },
+  {
+    "id": "cube-shelf-4x4",
+    "file": "cube-shelf-4x4.glb",
+    "width": 1.4700000286102295,
+    "depth": 0.38999998569488525,
+    "height": 1.4700000286102295,
+    "bytes": 38436
+  },
+  {
+    "id": "tall-bookcase",
+    "file": "tall-bookcase.glb",
+    "width": 0.800000011920929,
+    "depth": 0.2800000011920929,
+    "height": 2.0199999809265137,
+    "bytes": 39276
+  },
+  {
+    "id": "modern-6-drawer-dresser",
+    "file": "modern-6-drawer-dresser.glb",
+    "width": 1.600000023841858,
+    "depth": 0.47999998927116394,
+    "height": 0.7799999713897705,
+    "bytes": 43204
+  },
+  {
+    "id": "modern-3-drawer-chest",
+    "file": "modern-3-drawer-chest.glb",
+    "width": 0.800000011920929,
+    "depth": 0.47999998927116394,
+    "height": 0.7799999713897705,
+    "bytes": 29520
+  },
+  {
+    "id": "classic-8-drawer-dresser",
+    "file": "classic-8-drawer-dresser.glb",
+    "width": 1.600000023841858,
+    "depth": 0.5,
+    "height": 0.9599999785423279,
+    "bytes": 159696
+  },
+  {
+    "id": "classic-nightstand",
+    "file": "classic-nightstand.glb",
+    "width": 0.46000000834465027,
+    "depth": 0.3499999940395355,
+    "height": 0.699999988079071,
+    "bytes": 44480
+  },
+  {
+    "id": "square-side-table",
+    "file": "square-side-table.glb",
+    "width": 0.550000011920929,
+    "depth": 0.550000011920929,
+    "height": 0.44999998807907104,
+    "bytes": 19836
+  },
+  {
+    "id": "coffee-table-with-shelf",
+    "file": "coffee-table-with-shelf.glb",
+    "width": 0.8999999761581421,
+    "depth": 0.550000011920929,
+    "height": 0.44999998807907104,
+    "bytes": 23552
+  },
+  {
+    "id": "bentwood-armchair",
+    "file": "bentwood-armchair.glb",
+    "width": 0.6800000071525574,
+    "depth": 0.8199999928474426,
+    "height": 1.0,
+    "bytes": 579472
+  },
+  {
+    "id": "rolled-arm-3-seat-sofa",
+    "file": "rolled-arm-3-seat-sofa.glb",
+    "width": 2.180000066757202,
+    "depth": 0.8799999952316284,
+    "height": 0.8799999952316284,
+    "bytes": 94972
+  },
+  {
+    "id": "tufted-mid-century-sofa",
+    "file": "tufted-mid-century-sofa.glb",
+    "width": 2.2351999282836914,
+    "depth": 0.9779000282287598,
+    "height": 0.8762999773025513,
+    "bytes": 97164
+  },
+  {
+    "id": "compact-desk",
+    "file": "compact-desk.glb",
+    "width": 1.0499999523162842,
+    "depth": 0.5,
+    "height": 0.75,
+    "bytes": 38124
+  },
+  {
+    "id": "wood-frame-3-seat-sofa",
+    "file": "wood-frame-3-seat-sofa.glb",
+    "width": 2.2860000133514404,
+    "depth": 0.8889999985694885,
+    "height": 0.8127999901771545,
+    "bytes": 78052
+  },
+  {
+    "id": "low-profile-sofa",
+    "file": "low-profile-sofa.glb",
+    "width": 2.1082000732421875,
+    "depth": 0.8636000156402588,
+    "height": 0.7874000072479248,
+    "bytes": 67660
+  },
+  {
+    "id": "mid-century-3-seat-sofa",
+    "file": "mid-century-3-seat-sofa.glb",
+    "width": 1.9600000381469727,
+    "depth": 0.8399999737739563,
+    "height": 0.8700000047683716,
+    "bytes": 90156
+  },
+  {
+    "id": "angled-arm-3-seat-sofa",
+    "file": "angled-arm-3-seat-sofa.glb",
+    "width": 1.899999976158142,
+    "depth": 0.8600000143051147,
+    "height": 0.8500000238418579,
+    "bytes": 80996
+  },
+  {
+    "id": "high-platform-bed-queen",
+    "file": "high-platform-bed-queen.glb",
+    "width": 1.6799999475479126,
+    "depth": 2.109999895095825,
+    "height": 1.0,
+    "bytes": 39504
+  },
+  {
+    "id": "corner-sofa-bed",
+    "file": "corner-sofa-bed.glb",
+    "width": 2.299999952316284,
+    "depth": 1.5099999904632568,
+    "height": 0.8600000143051147,
+    "bytes": 86632
+  },
+  {
+    "id": "mid-century-6-drawer-dresser",
+    "file": "mid-century-6-drawer-dresser.glb",
+    "width": 1.4223999977111816,
+    "depth": 0.45719999074935913,
+    "height": 0.9143999814987183,
+    "bytes": 63336
+  }
+]

@@ -34,3 +34,18 @@ shown model matches the inputs.
 - [ ] 60 cm and 90 cm tables match tape marks; pinch cannot resize.
 - [ ] After an edit, AR opens the new size, not the previous one.
 - [ ] Scan → Template switch never opens the scan's USDZ.
+
+## Popular products (Blender models)
+
+`public/models/products/*.glb` are generic look-alike models sized to popular retail products'
+published dimensions (listed with sources in `src/models/productCatalog.ts`). Products are named
+only to describe the size. Regenerate them with Blender 4.2+:
+
+```sh
+blender -b --factory-startup -P blender/make_products.py -- public/models/products
+# optional preview renders: set PREVIEW_DIR=<folder> first
+```
+
+The script snaps each model to its exact target size and fails if it is off by more than 1 mm;
+`npm test` loads every GLB and checks it again. Link straight to one with
+`?source=product&product=<id>`.

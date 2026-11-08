@@ -3,6 +3,7 @@ import type { ModelViewerElement } from '@google/model-viewer';
 
 export type PreviewAsset = { glbUrl: string; usdzUrl?: string; revision: number };
 export type ShowResult = 'loaded' | 'superseded' | 'error';
+export type MaterialColor = { hex: string; roughness?: number };
 
 /**
  * Owns the <model-viewer> element: its AR configuration, which asset is loaded,
@@ -55,6 +56,24 @@ export class FurnitureViewer {
   get canActivateAR(): boolean {
     return this.el.canActivateAR;
   }
+
+  /**
+   * Recolour the loaded model's materials by glTF material name. Generated AR files are built
+   * from the live scene, so the colours carry into Quick Look. Roughness falls back to the
+   * material's original value when a colour does not set one.
+   */
+  setMaterialColors(colors: Record<string, MaterialColor>) {
+    for (const m of this.el.model?.materials ?? []) {
+      const c = colors[m.name];
+      if (!c) continue;
+      const pbr = m.pbrMetallicRoughness;
+      if (!this.baseRoughness.has(m)) this.baseRoughness.set(m, pbr.roughnessFactor);
+      pbr.setBaseColorFactor(c.hex);
+      pbr.setRoughnessFactor(c.roughness ?? this.baseRoughness.get(m)!);
+    }
+  }
+
+  private baseRoughness = new WeakMap<object, number>();
 
   /** Must be called from a user gesture (click) so Safari allows the Quick Look handoff. */
   activateAR(): Promise<void> {

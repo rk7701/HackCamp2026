@@ -32,6 +32,7 @@
         <fieldset class="segmented">
           <legend>Start from</legend>
           <label><input type="radio" name="source" value="template" checked /> Template</label>
+          <label><input type="radio" name="source" value="product" /> Popular products</label>
           <label><input type="radio" name="source" value="scan" /> Sample scan</label>
         </fieldset>
 
@@ -51,6 +52,27 @@
             <div id="dims-fields"></div>
             <button id="reset-dims" type="button">Reset to defaults</button>
           </form>
+        </div>
+
+        <div id="product-panel" hidden>
+          <label class="field">
+            <span class="field-label">Search products</span>
+            <input type="search" id="product-search" placeholder="e.g. KALLAX, sofa, walnut" autocomplete="off" />
+          </label>
+          <div class="filter-row">
+            <label class="field">
+              <span class="field-label">Brand</span>
+              <select id="brand-filter"><option value="">All brands</option></select>
+            </label>
+            <label class="field">
+              <span class="field-label">Type</span>
+              <select id="type-filter"><option value="">All types</option></select>
+            </label>
+          </div>
+          <p id="product-count" class="note" role="status" aria-live="polite"></p>
+          <ul id="product-list" class="product-list" aria-label="Products"></ul>
+          <div id="product-colors"></div>
+          <p id="product-info" class="note"></p>
         </div>
 
         <div id="scan-panel" hidden>
