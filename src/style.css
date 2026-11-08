@@ -1,0 +1,132 @@
+:root {
+  --bg: #f6f4f0;
+  --surface: #ffffff;
+  --text: #1c1b19;
+  --muted: #5c5850;
+  --border: #c9c3b8;
+  --accent: #1f5fbf;
+  --accent-text: #ffffff;
+  --error: #b3261e;
+  --ok: #1e6b34;
+  --warn: #8a5a00;
+  --focus: #1f5fbf;
+  --viewer-bg: #e9e5de;
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: var(--text);
+  background: var(--bg);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #151514;
+    --surface: #1f1f1d;
+    --text: #f1eee8;
+    --muted: #b5afa4;
+    --border: #4a4740;
+    --accent: #7fb0ff;
+    --accent-text: #0b1830;
+    --error: #ff8a80;
+    --ok: #7ed79a;
+    --warn: #f2c26b;
+    --focus: #7fb0ff;
+    --viewer-bg: #2a2926;
+  }
+}
+
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); line-height: 1.45; }
+
+.site-header { padding: 16px 16px 0; max-width: 1100px; margin: 0 auto; }
+.site-header h1 { margin: 0; font-size: 1.5rem; }
+.site-header p { margin: 4px 0 0; color: var(--muted); }
+
+.layout {
+  display: grid;
+  gap: 16px;
+  padding: 16px;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+@media (min-width: 820px) {
+  .layout { grid-template-columns: minmax(0, 3fr) minmax(280px, 2fr); align-items: start; }
+  .viewer-pane { position: sticky; top: 16px; }
+}
+
+.viewer-pane, .controls {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+
+model-viewer {
+  width: 100%;
+  height: min(60vh, 520px);
+  min-height: 300px;
+  background: var(--viewer-bg);
+  border-radius: 8px;
+  --poster-color: transparent;
+  /* The app renders its own AR button so it controls when AR may launch. */
+  --ar-button-display: none;
+}
+
+.ar-button {
+  display: block;
+  width: 100%;
+  margin-top: 10px;
+  font-size: 1.1rem;
+  padding: 14px 20px;
+}
+.ar-button[hidden] { display: none; }
+
+.dims-badge { margin: 10px 0 0; font-weight: 600; font-variant-numeric: tabular-nums; }
+
+.viewer-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 6px; }
+.status { margin: 0; color: var(--muted); min-height: 1.45em; }
+.status.error { color: var(--error); }
+
+.note { color: var(--muted); font-size: 0.92rem; }
+
+fieldset { border: 0; padding: 0; margin: 0 0 16px; }
+legend, .field-label { font-weight: 600; margin-bottom: 6px; display: block; }
+
+.segmented { display: flex; flex-wrap: wrap; gap: 8px; }
+.segmented legend { width: 100%; }
+.segmented label {
+  display: inline-flex; align-items: center; gap: 6px;
+  border: 1px solid var(--border); border-radius: 8px; padding: 6px 12px; cursor: pointer;
+}
+.segmented label:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+
+.field { display: block; margin-bottom: 14px; }
+.input-row { display: flex; align-items: center; gap: 8px; }
+.input-row input { width: 9em; }
+.unit { color: var(--muted); }
+.field-error { color: var(--error); margin: 4px 0 0; font-size: 0.92rem; }
+.field-error:empty { display: none; }
+input[aria-invalid='true'] { border-color: var(--error); box-shadow: inset 0 0 0 1px var(--error); }
+
+input[type='text'], select {
+  font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px;
+}
+select { min-width: 12em; }
+
+button {
+  font: inherit; color: var(--text); background: var(--surface);
+  border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; cursor: pointer;
+}
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: 0.55; cursor: not-allowed; }
+
+:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+
+details { border-top: 1px solid var(--border); margin-top: 16px; padding-top: 12px; }
+summary { font-weight: 600; cursor: pointer; }
+.check { display: flex; align-items: center; gap: 8px; margin: 4px 0 8px; }
+
+.fit-result { font-weight: 600; margin: 8px 0 0; }
+.fit-result:empty { display: none; }
+.fit-result.fits { color: var(--ok); }
+.fit-result.tight { color: var(--warn); }
+.fit-result.too-big { color: var(--error); }

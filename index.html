@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Fit Check AR</title>
+  </head>
+  <body>
+    <header class="site-header">
+      <h1>Fit Check AR</h1>
+      <p>See secondhand furniture at real size in your room before you pick it up.</p>
+    </header>
+
+    <main class="layout">
+      <section class="viewer-pane" aria-label="3D preview">
+        <model-viewer id="viewer" alt="3D preview of the selected furniture">
+        </model-viewer>
+        <p class="dims-badge" id="dims-badge" aria-label="Size of the model shown"></p>
+        <button id="ar-button" class="primary ar-button" type="button" hidden>View in my room</button>
+        <div class="viewer-actions">
+          <p id="status" class="status" role="status" aria-live="polite"></p>
+          <button id="reset-view" type="button">Reset view</button>
+        </div>
+        <p id="ar-note" class="note" hidden>
+          To place this at real size in your room, open this page in Safari on an iPhone or iPad.
+          The 3D preview and dimensions still work here.
+        </p>
+      </section>
+
+      <section class="controls" aria-label="Furniture settings">
+        <fieldset class="segmented">
+          <legend>Start from</legend>
+          <label><input type="radio" name="source" value="template" checked /> Template</label>
+          <label><input type="radio" name="source" value="scan" /> Sample scan</label>
+        </fieldset>
+
+        <div id="template-panel">
+          <label class="field">
+            <span class="field-label">Furniture type</span>
+            <select id="template-select"></select>
+          </label>
+
+          <fieldset class="segmented">
+            <legend>Units</legend>
+            <label><input type="radio" name="unit" value="cm" checked /> cm</label>
+            <label><input type="radio" name="unit" value="in" /> inches</label>
+          </fieldset>
+
+          <form id="dims-form" novalidate>
+            <div id="dims-fields"></div>
+            <button id="reset-dims" type="button">Reset to defaults</button>
+          </form>
+        </div>
+
+        <div id="scan-panel" hidden>
+          <p id="scan-info"></p>
+        </div>
+
+        <details id="fit-panel">
+          <summary>Will it fit a gap?</summary>
+          <p class="note">Measure the floor space with a tape measure. This checks only that space, not doorways or the path into the room.</p>
+          <div id="gap-fields"></div>
+          <label class="check"><input type="checkbox" id="gap-rotate" /> Turn the furniture 90°</label>
+          <p id="fit-result" class="fit-result" role="status" aria-live="polite"></p>
+        </details>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
