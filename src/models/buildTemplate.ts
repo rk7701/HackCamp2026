@@ -16,10 +16,35 @@ export function buildTemplate(def: TemplateDef, size: DimensionsM): THREE.Group 
 
   const shape = def.shape;
   if (shape.kind === 'table') addTable(root, size, shape, material);
-  else addBookshelf(root, size, shape, material);
+  else if (shape.kind === 'bookshelf') addBookshelf(root, size, shape, material);
+  else addSeating(root, size, shape.kind, material);
 
   assertBounds(root, size);
   return root;
+}
+
+function addSeating(root: THREE.Group, s: DimensionsM, kind: 'chair' | 'sofa', mat: THREE.Material) {
+  const seatBottom = s.height * 0.4;
+  const seatThickness = s.height * 0.16;
+  const backThickness = s.depth * 0.13;
+  const leg = Math.min(s.width * 0.08, s.depth * 0.08);
+  root.add(box(s.width, seatThickness, s.depth, 0, seatBottom + seatThickness / 2, 0, mat, 'seat'));
+  const backHeight = s.height - seatBottom - seatThickness;
+  root.add(box(s.width, backHeight, backThickness, 0, s.height - backHeight / 2,
+    -s.depth / 2 + backThickness / 2, mat, 'backrest'));
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      root.add(box(leg, seatBottom, leg, sx * (s.width / 2 - leg), seatBottom / 2,
+        sz * (s.depth / 2 - leg), mat, 'leg'));
+    }
+  }
+  if (kind === 'sofa') {
+    const arm = s.width * 0.08;
+    for (const sx of [-1, 1]) {
+      root.add(box(arm, s.height * 0.24, s.depth, sx * (s.width - arm) / 2,
+        seatBottom + seatThickness + s.height * 0.12, 0, mat, 'armrest'));
+    }
+  }
 }
 
 function box(w: number, h: number, d: number, x: number, y: number, z: number, mat: THREE.Material, name: string) {

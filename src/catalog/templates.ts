@@ -1,6 +1,6 @@
 import type { DimensionKey, DimensionsM, RangeM } from '../domain/dimensions';
 
-export type TemplateId = 'table' | 'bookshelf';
+export type TemplateId = 'table' | 'bookshelf' | 'chair' | 'sofa';
 
 export type TableShape = {
   kind: 'table';
@@ -17,7 +17,8 @@ export type BookshelfShape = {
   shelfSpacing: number;
 };
 
-export type TemplateShape = TableShape | BookshelfShape;
+export type SeatingShape = { kind: 'chair' | 'sofa' };
+export type TemplateShape = TableShape | BookshelfShape | SeatingShape;
 
 export type TemplateDef = {
   id: TemplateId;
@@ -29,6 +30,18 @@ export type TemplateDef = {
 };
 
 export const TEMPLATES: Record<TemplateId, TemplateDef> = {
+  chair: {
+    id: 'chair', label: 'Chair',
+    defaults: { width: 0.55, depth: 0.55, height: 0.85 },
+    ranges: { width: { min: 0.3, max: 1 }, depth: { min: 0.3, max: 1 }, height: { min: 0.5, max: 1.3 } },
+    shape: { kind: 'chair' }, color: '#9baf9b',
+  },
+  sofa: {
+    id: 'sofa', label: 'Sofa',
+    defaults: { width: 2, depth: 0.9, height: 0.85 },
+    ranges: { width: { min: 1, max: 3.5 }, depth: { min: 0.6, max: 1.5 }, height: { min: 0.5, max: 1.3 } },
+    shape: { kind: 'sofa' }, color: '#c7b7a0',
+  },
   table: {
     id: 'table',
     label: 'Table',

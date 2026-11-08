@@ -17,6 +17,7 @@ import { buildTemplate, disposeGroup } from './models/buildTemplate';
 import { exportGlb, ObjectUrlPool } from './models/exportGlb';
 import { SCANS, resolveScan, type ScanAsset } from './models/scanCatalog';
 import { FurnitureViewer } from './viewer/furnitureViewer';
+import { initShell } from './shell';
 
 type FurnitureSource =
   | { kind: 'template'; templateId: TemplateId; size: DimensionsM }
@@ -337,6 +338,7 @@ document.querySelectorAll<HTMLInputElement>('input[name="unit"]').forEach((r) =>
 );
 
 function setMode(mode: Mode) {
+  window.clearTimeout(debounce);
   state.mode = mode;
   els.templatePanel.hidden = mode !== 'template';
   els.scanPanel.hidden = mode !== 'scan';
@@ -382,19 +384,83 @@ function renderScanInfo() {
   const scan = state.scan;
   if (!scan) {
     els.scanInfo.textContent =
-      'No sample scan has been added to this site yet. Add sample-scan.glb (and optionally sample-scan.usdz) to public/models/.';
+      'No scan is loaded yet. Use the Scan page to import a GLB model of your furniture.';
     return;
   }
   const m = scan.measuredSize;
   const u = state.unit;
   els.scanInfo.textContent =
-    `${scan.label}: a real piece captured with a 3D scanner. Checked with a tape measure at ` +
+    `${scan.label}. Entered measurements: ` +
     `${formatLength(m.width, u)} wide, ${formatLength(m.depth, u)} deep and ${formatLength(m.height, u)} high.`;
 }
 
 renderScanInfo();
 void resolveScan(SCANS[0]).then((scan) => {
-  state.scan = scan;
+  if (!state.scan) state.scan = scan;
   renderScanInfo();
   if (state.mode === 'scan') setMode('scan');
+});
+
+// ---------- Gallery, navigation and local model import ----------
+
+const shell = initShell((templateId) => {
+  state.templateId = templateId;
+  els.templateSelect.value = templateId;
+  fillDims(TEMPLATES[templateId].defaults);
+  document.querySelector<HTMLInputElement>('input[name="source"][value="template"]')!.checked = true;
+  setMode('template');
+});
+
+const importUrls = new ObjectUrlPool();
+const modelFile = $<HTMLInputElement>('model-file');
+const importStatus = $('import-status');
+const importButton = $<HTMLButtonElement>('import-button');
+modelFile.addEventListener('change', () => {
+  $('model-file-label').textContent = modelFile.files?.[0]?.name ?? 'GLB file from your 3D scanning app';
+  importStatus.textContent = '';
+});
+
+$<HTMLFormElement>('import-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  void importModel();
+});
+
+async function importModel() {
+  const file = modelFile.files?.[0];
+  if (!file) return;
+  const size: Partial<DimensionsM> = {};
+  for (const key of DIMENSION_KEYS) {
+    const field = $<HTMLInputElement>(`import-${key}`);
+    const result = parseLength(field.value, 'cm', { min: 0.01, max: 20 }, LABELS[key]);
+    field.setAttribute('aria-invalid', String(!result.ok));
+    if (!result.ok) { importStatus.textContent = result.error; field.focus(); return; }
+    size[key] = result.meters;
+  }
+  importButton.disabled = true;
+  try {
+    // A missing/invalid GLB header should not replace the user's current model.
+    const header = await file.slice(0, 12).arrayBuffer();
+    if (header.byteLength < 12) throw new Error('Choose a valid GLB model exported by your scanning app.');
+    const data = new DataView(header);
+    if (data.getUint32(0, true) !== 0x46546c67 || data.getUint32(4, true) !== 2 || data.getUint32(8, true) !== file.size) {
+      throw new Error('This file is not a valid GLB 2.0 model. Export it as GLB and try again.');
+    }
+    const glbUrl = importUrls.create(file);
+    state.scan = { id: 'imported-scan', label: file.name.replace(/\.glb$/i, ''), glbUrl, measuredSize: size as DimensionsM };
+    document.querySelector<HTMLInputElement>('input[name="source"][value="scan"]')!.checked = true;
+    renderScanInfo();
+    setMode('scan');
+    importUrls.revokeAllExcept(glbUrl);
+    importStatus.textContent = '';
+    shell.navigate('view');
+  } catch (error) {
+    importStatus.textContent = error instanceof Error ? error.message : 'This model could not be opened.';
+  } finally { importButton.disabled = false; }
+}
+
+window.addEventListener('pagehide', (event) => {
+  if (!event.persisted) {
+    urls.revokeAllExcept(null);
+    importUrls.revokeAllExcept(null);
+  }
 });

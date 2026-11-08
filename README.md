@@ -3,6 +3,12 @@
 Enter a piece of furniture's dimensions, inspect it in 3D, and place it at real size in your room
 with AR Quick Look (Safari on iPhone/iPad). Static site: no backend, accounts or API keys.
 
+The mobile layout has Home, Scan, and View pages. Home displays images rendered from
+the furniture models. Search opens a dropdown with live text search and furniture-type
+checkboxes. Select a furniture card to edit its size and preview it on View.
+Scan imports a GLB file with tape-measured dimensions; files remain in the browser tab
+and are not uploaded or saved across reloads. Browser LiDAR capture is not supported.
+
 ## Develop (Windows)
 
 ```sh
@@ -18,7 +24,7 @@ AR needs HTTPS, so test on the phone by deploying `dist/` to an HTTPS static hos
 ## How it works
 
 - `src/domain/dimensions.ts` parses cm/in input, stores meters, validates ranges.
-- `src/catalog/templates.ts` defines the Table and Bookshelf templates (defaults, ranges, shape params).
+- `src/catalog/templates.ts` defines Chair, Table, Sofa, and Bookshelf templates (defaults, ranges, shape params).
 - `src/models/buildTemplate.ts` builds the Three.js group (X width, Y height, Z depth, centered, floor at Y = 0) and checks its bounding box.
 - `src/models/exportGlb.ts` exports only the furniture as GLB and manages object URLs.
 - `src/viewer/furnitureViewer.ts` configures `<model-viewer>` with `ar-modes="quick-look"` and `ar-scale="fixed"`; sets `ios-src` only for scans so templates get a freshly generated USDZ.
