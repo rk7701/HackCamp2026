@@ -9,6 +9,17 @@ checkboxes. Select a furniture card to edit its size and preview it on View.
 Scan imports a GLB file with tape-measured dimensions; files remain in the browser tab
 and are not uploaded or saved across reloads. Browser LiDAR capture is not supported.
 
+The horizontally scrollable brand row at the top lists IKEA, Article, West Elm,
+Structube, and the editable templates. Each brand opens its own dropdown containing
+only its available categories. Its filters share state with the search dropdown.
+Home includes all 20 models from Ricky's product catalog plus the four templates.
+Selecting a catalog item loads its bundled GLB, published dimensions, finish choices,
+and fit calculator. These are generic models sized like the referenced retail items,
+not official product assets. The viewer includes the original dimension-source link.
+
+Catalog definitions and GLBs were brought over from Ricky's `5ca989c` commit.
+`blender/make_products.py` regenerates the bundled catalog models.
+
 ## Develop (Windows)
 
 ```sh

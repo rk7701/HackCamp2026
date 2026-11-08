@@ -30,10 +30,14 @@
           </div>
         </div>
       </header>
+      <div class="brand-navigation" id="shop-area">
+        <nav class="brand-scroll" id="shop-brands" aria-label="Shop by brand"></nav>
+      </div>
 
       <main>
         <section class="page home-page" id="home-page" aria-labelledby="home-heading">
           <h1 class="sr-only" id="home-heading">Your furniture</h1>
+          <div class="gallery-context"><div><p id="gallery-title">All furniture</p><span id="gallery-count" role="status" aria-live="polite"></span></div><button class="text-button" id="clear-shop-filters" type="button" hidden>Clear filters</button></div>
           <div class="furniture-grid" id="furniture-grid"></div>
           <div class="empty-state" id="gallery-empty" hidden><svg class="icon" aria-hidden="true"><use href="#icon-search"/></svg><h2>No furniture found</h2><p>Try another search or change the furniture types above.</p><button id="empty-reset" type="button">Clear search and filters</button></div>
         </section>
@@ -60,12 +64,13 @@
               <p id="ar-note" class="note" hidden>To place this at real size in your room, open the HTTPS site in Safari on an iPhone or iPad. The 3D preview and dimensions still work here.</p>
             </section>
             <section class="controls" aria-label="Furniture settings">
-              <fieldset class="segmented"><legend>Start from</legend><label><input type="radio" name="source" value="template" checked /> Template</label><label><input type="radio" name="source" value="scan" /> Imported / sample scan</label></fieldset>
+              <fieldset class="segmented"><legend>Start from</legend><label><input type="radio" name="source" value="template" checked /> Template</label><label><input type="radio" name="source" value="product" /> Shop item</label><label><input type="radio" name="source" value="scan" /> Imported / sample scan</label></fieldset>
               <div id="template-panel">
                 <label class="field"><span class="field-label">Furniture type</span><select id="template-select"></select></label>
                 <fieldset class="segmented"><legend>Units</legend><label><input type="radio" name="unit" value="cm" checked /> cm</label><label><input type="radio" name="unit" value="in" /> inches</label></fieldset>
                 <form id="dims-form" novalidate><div id="dims-fields"></div><button id="reset-dims" type="button">Reset to defaults</button></form>
               </div>
+              <div id="product-panel" hidden><h2 id="product-title"></h2><p id="product-brand" class="eyebrow"></p><div id="product-colors"></div><p id="product-info" class="note"></p><a class="text-link" href="#home">Browse more furniture</a></div>
               <div id="scan-panel" hidden><p id="scan-info"></p><a class="text-link" href="#scan">Import another model</a></div>
               <details id="fit-panel"><summary>Will it fit a gap?</summary><p class="note">Measure the floor space with a tape measure. Check doorways and the path into the room separately.</p><div id="gap-fields"></div><label class="check"><input type="checkbox" id="gap-rotate" /> Turn the furniture 90°</label><p id="fit-result" class="fit-result" role="status" aria-live="polite"></p></details>
             </section>

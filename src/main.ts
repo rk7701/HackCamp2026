@@ -18,12 +18,14 @@ import { exportGlb, ObjectUrlPool } from './models/exportGlb';
 import { SCANS, resolveScan, type ScanAsset } from './models/scanCatalog';
 import { FurnitureViewer } from './viewer/furnitureViewer';
 import { initShell } from './shell';
+import { PRODUCTS, getProduct, resolveColors, describeColors, type Product, type ColorChoices } from './models/productCatalog';
 
 type FurnitureSource =
   | { kind: 'template'; templateId: TemplateId; size: DimensionsM }
+  | { kind: 'product'; productId: string; size: DimensionsM }
   | { kind: 'scan'; assetId: string; measuredSize: DimensionsM };
 
-type Mode = 'template' | 'scan';
+type Mode = 'template' | 'product' | 'scan';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
@@ -42,6 +44,9 @@ const els = {
   resetView: $<HTMLButtonElement>('reset-view'),
   scanPanel: $('scan-panel'),
   scanInfo: $('scan-info'),
+  productPanel: $('product-panel'),
+  productInfo: $('product-info'),
+  productColors: $('product-colors'),
   gapFields: $('gap-fields'),
   gapRotate: $<HTMLInputElement>('gap-rotate'),
   fitResult: $('fit-result'),
@@ -54,6 +59,8 @@ const DEBOUNCE_MS = 350;
 const state = {
   mode: 'template' as Mode,
   templateId: 'table' as TemplateId,
+  productId: PRODUCTS[0].id,
+  colorChoices: {} as Record<string, ColorChoices>,
   unit: 'cm' as Unit,
   /** Incremented for every preview request; older results are ignored. */
   revision: 0,
@@ -140,7 +147,7 @@ function setStatus(text: string, kind: 'info' | 'error' = 'info') {
 function shownSize(): DimensionsM | null {
   const s = state.shown;
   if (!s) return null;
-  return s.kind === 'template' ? s.size : s.measuredSize;
+  return s.kind === 'scan' ? s.measuredSize : s.size;
 }
 
 /** AR may launch only when the loaded model is exactly what the user selected. */
@@ -150,7 +157,9 @@ function updateArAvailability() {
     !!s &&
     (state.mode === 'template'
       ? s.kind === 'template' && s.templateId === state.templateId && state.inputsValid
-      : s.kind === 'scan');
+      : state.mode === 'product'
+        ? s.kind === 'product' && s.productId === state.productId
+        : s.kind === 'scan' && s.assetId === state.scan?.id);
   els.arButton.disabled = state.busy || !matches;
   els.arButton.hidden = !viewer.canActivateAR;
   els.arNote.hidden = state.shown === null || viewer.canActivateAR;
@@ -229,6 +238,97 @@ async function showScan(scan: ScanAsset) {
   state.shown = { kind: 'scan', assetId: scan.id, measuredSize: scan.measuredSize };
   setBusy(false, 'Ready.');
   renderShown();
+}
+
+async function showProduct(product: Product) {
+  const revision = ++state.revision;
+  renderProductColors();
+  renderProductInfo();
+  $('product-title').textContent = product.label;
+  $('product-brand').textContent = `${product.brand} · ${product.type}`;
+  setBusy(true, 'Loading furniture…');
+  const result = await viewer.show({ glbUrl: product.glbUrl, revision });
+  if (revision !== state.revision || result === 'superseded') return;
+  if (result === 'error') {
+    setBusy(false);
+    setStatus('This furniture model could not load. Select another item or try again.', 'error');
+    return;
+  }
+  urls.revokeAllExcept(null);
+  state.shown = { kind: 'product', productId: product.id, size: product.size };
+  applyProductColors();
+  setBusy(false, 'Ready.');
+  renderShown();
+}
+
+function choicesFor(id: string): ColorChoices {
+  return (state.colorChoices[id] ??= {});
+}
+
+/** Recolour the shown product. Safe to call any time: it only acts when that product is loaded. */
+function applyProductColors() {
+  const s = state.shown;
+  const p = getProduct(state.productId);
+  if (s?.kind !== 'product' || !p || s.productId !== p.id) return;
+  viewer.setMaterialColors(resolveColors(p, choicesFor(p.id)));
+}
+
+function renderProductColors() {
+  const p = getProduct(state.productId);
+  els.productColors.innerHTML = '';
+  if (!p) return;
+  const choices = choicesFor(p.id);
+  for (const part of p.colorParts) {
+    const id = `color-${part.label.toLowerCase()}`;
+    const field = document.createElement('div');
+    field.className = 'field';
+    const label = document.createElement('label');
+    label.className = 'field-label';
+    label.htmlFor = id;
+    label.textContent = p.colorParts.length > 1 ? `${part.label} colour` : 'Colour';
+    const row = document.createElement('div');
+    row.className = 'color-row';
+    const swatch = document.createElement('span');
+    swatch.className = 'swatch';
+    swatch.setAttribute('aria-hidden', 'true');
+    const select = document.createElement('select');
+    select.id = id;
+    part.options.forEach((o, i) => select.add(new Option(o.name, String(i))));
+    select.value = String(choices[part.label] ?? 0);
+    const paint = () => {
+      const o = part.options[Number(select.value)];
+      const tone = o.overrides ? Object.values(o.overrides)[0] : o.hex;
+      swatch.style.background = o.overrides ? `linear-gradient(135deg, ${tone} 50%, ${o.hex} 50%)` : o.hex;
+    };
+    paint();
+    select.addEventListener('change', () => {
+      choices[part.label] = Number(select.value);
+      paint();
+      applyProductColors();
+      renderProductInfo();
+    });
+    row.append(swatch, select);
+    field.append(label, row);
+    els.productColors.append(field);
+  }
+}
+
+function renderProductInfo() {
+  const p = getProduct(state.productId);
+  if (!p) return;
+  const u = state.unit;
+  els.productInfo.innerHTML = '';
+  const sized = document.createElement('span');
+  sized.textContent =
+    `Sized like the ${p.sizedLike} in ${describeColors(p, choicesFor(p.id))}: ${formatLength(p.size.width, u)} wide, ` +
+    `${formatLength(p.size.depth, u)} deep, ${formatLength(p.size.height, u)} high. Colour names are the retailer's; ` +
+    `shades are approximate. A look-alike model for checking size, not the actual product. `;
+  const link = document.createElement('a');
+  link.href = p.sourceUrl;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  link.textContent = 'Dimension source';
+  els.productInfo.append(sized, link);
 }
 
 let debounce: number | undefined;
@@ -342,8 +442,12 @@ function setMode(mode: Mode) {
   state.mode = mode;
   els.templatePanel.hidden = mode !== 'template';
   els.scanPanel.hidden = mode !== 'scan';
+  els.productPanel.hidden = mode !== 'product';
   if (mode === 'template') {
     applyTemplateNow();
+  } else if (mode === 'product') {
+    const product = getProduct(state.productId);
+    if (product) void showProduct(product);
   } else if (state.scan) {
     void showScan(state.scan);
   } else {
@@ -403,7 +507,14 @@ void resolveScan(SCANS[0]).then((scan) => {
 
 // ---------- Gallery, navigation and local model import ----------
 
-const shell = initShell((templateId) => {
+const shell = initShell((item) => {
+  if (item.source.kind === 'product') {
+    state.productId = item.source.productId;
+    document.querySelector<HTMLInputElement>('input[name="source"][value="product"]')!.checked = true;
+    setMode('product');
+    return;
+  }
+  const templateId = item.source.templateId;
   state.templateId = templateId;
   els.templateSelect.value = templateId;
   fillDims(TEMPLATES[templateId].defaults);

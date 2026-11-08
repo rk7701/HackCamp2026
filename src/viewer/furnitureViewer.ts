@@ -3,6 +3,7 @@ import type { ModelViewerElement } from '@google/model-viewer';
 
 export type PreviewAsset = { glbUrl: string; usdzUrl?: string; revision: number };
 export type ShowResult = 'loaded' | 'superseded' | 'error';
+export type MaterialColor = { hex: string; roughness?: number };
 
 /**
  * Owns the <model-viewer> element: its AR configuration, which asset is loaded,
@@ -55,6 +56,20 @@ export class FurnitureViewer {
   get canActivateAR(): boolean {
     return this.el.canActivateAR;
   }
+
+  /** Apply the catalog's finish choices to the live model used for preview and AR export. */
+  setMaterialColors(colors: Record<string, MaterialColor>) {
+    for (const material of this.el.model?.materials ?? []) {
+      const color = colors[material.name];
+      if (!color) continue;
+      const pbr = material.pbrMetallicRoughness;
+      if (!this.baseRoughness.has(material)) this.baseRoughness.set(material, pbr.roughnessFactor);
+      pbr.setBaseColorFactor(color.hex);
+      pbr.setRoughnessFactor(color.roughness ?? this.baseRoughness.get(material)!);
+    }
+  }
+
+  private baseRoughness = new WeakMap<object, number>();
 
   /** Must be called from a user gesture (click) so Safari allows the Quick Look handoff. */
   activateAR(): Promise<void> {

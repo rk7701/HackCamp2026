@@ -1,114 +1,224 @@
-import { FURNITURE_TYPES, GALLERY, filterFurniture } from './catalog/gallery';
-import type { TemplateId } from './catalog/templates';
-import { furnitureThumbnail } from './models/thumbnail';
+import { ALL_FURNITURE, CATEGORIES, GALLERY_BRANDS, filterFurniture, type FurnitureCategory, type GalleryBrand, type GalleryItem } from './catalog/gallery';
+import { furnitureThumbnail, productThumbnail } from './models/thumbnail';
 
 export type Page = 'home' | 'scan' | 'view';
+const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 
-export function initShell(onSelect: (id: TemplateId) => void) {
-  const toggle = document.querySelector<HTMLButtonElement>('#search-toggle')!;
-  const dropdown = document.querySelector<HTMLElement>('#search-dropdown')!;
-  const search = document.querySelector<HTMLInputElement>('#furniture-search')!;
-  const filters = document.querySelector<HTMLElement>('#furniture-filters')!;
-  const grid = document.querySelector<HTMLElement>('#furniture-grid')!;
-  const cards = new Map<TemplateId, HTMLButtonElement>();
-  const selectedTypes = new Set(Object.keys(FURNITURE_TYPES) as TemplateId[]);
+export function initShell(onSelect: (item: GalleryItem) => void) {
+  const toggle = $<HTMLButtonElement>('search-toggle');
+  const dropdown = $('search-dropdown');
+  let openBrand: GalleryBrand | null = null;
+  const brandPanels = new Map<GalleryBrand, HTMLElement>();
+  const search = $<HTMLInputElement>('furniture-search');
+  const grid = $('furniture-grid');
+  const cards = new Map<string, HTMLButtonElement>();
+  const selectedTypes = new Set<FurnitureCategory>(CATEGORIES);
+  let selectedBrand: GalleryBrand | '' = '';
+  const categoryInputs: HTMLInputElement[] = [];
+  const brandButtons = new Map<string, HTMLButtonElement>();
+  const categoryButtons: Array<{ brand: GalleryBrand; category: FurnitureCategory | ''; button: HTMLButtonElement }> = [];
 
-  function setSearchOpen(open: boolean, restoreFocus = false) {
-    dropdown.hidden = !open;
-    toggle.setAttribute('aria-expanded', String(open));
-    if (open) {
-      navigate('home');
-      search.focus();
-    } else if (restoreFocus) toggle.focus();
+  function closeSearch(restoreFocus = false) {
+    dropdown.hidden = true;
+    toggle.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) toggle.focus();
+  }
+  function closeShop(restoreFocus = false) {
+    const previous = openBrand;
+    for (const [brand, panel] of brandPanels) {
+      panel.hidden = true;
+      brandButtons.get(brand)?.setAttribute('aria-expanded', 'false');
+    }
+    openBrand = null;
+    if (restoreFocus && previous) brandButtons.get(previous)?.focus();
+  }
+  function openSearch() {
+    closeShop(); navigate('home');
+    dropdown.hidden = false;
+    toggle.setAttribute('aria-expanded', 'true');
+    search.focus();
+  }
+  function positionBrandDropdown() {
+    if (!openBrand) return;
+    const area = $('shop-area').getBoundingClientRect();
+    const trigger = brandButtons.get(openBrand)!.getBoundingClientRect();
+    const panel = brandPanels.get(openBrand)!;
+    panel.style.left = `${Math.max(12, Math.min(trigger.left - area.left, area.width - panel.offsetWidth - 12))}px`;
   }
 
-  for (const [id, label] of Object.entries(FURNITURE_TYPES)) {
-    const option = document.createElement('label');
-    option.className = 'filter-option';
-    const input = document.createElement('input');
-    input.type = 'checkbox';
-    input.value = id;
-    input.checked = true;
-    input.addEventListener('change', () => {
-      if (input.checked) selectedTypes.add(id as TemplateId);
-      else selectedTypes.delete(id as TemplateId);
-      render();
+  const allButton = document.createElement('button');
+  allButton.type = 'button'; allButton.className = 'brand-option'; allButton.dataset.brand = '';
+  allButton.textContent = 'All items';
+  allButton.addEventListener('click', () => { closeShop(); navigate('home'); reset(); });
+  brandButtons.set('', allButton); $('shop-brands').append(allButton);
+
+  for (const [index, brand] of GALLERY_BRANDS.entries()) {
+    const button = document.createElement('button');
+    button.type = 'button'; button.className = 'brand-option'; button.dataset.brand = brand;
+    const label = document.createElement('span'); label.textContent = brand;
+    const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    arrow.classList.add('icon'); arrow.setAttribute('viewBox', '0 0 24 24'); arrow.setAttribute('aria-hidden', 'true');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path'); path.setAttribute('d', 'm6 9 6 6 6-6');
+    arrow.append(path); button.append(label, arrow);
+    button.setAttribute('aria-expanded', 'false');
+    button.setAttribute('aria-controls', `brand-dropdown-${index}`);
+    const panel = document.createElement('div'); panel.id = `brand-dropdown-${index}`;
+    panel.className = 'brand-dropdown'; panel.hidden = true;
+    const heading = document.createElement('p'); heading.className = 'brand-dropdown-title'; heading.textContent = brand;
+    panel.append(heading);
+    const items = ALL_FURNITURE.filter(item => item.brand === brand);
+    const categories = CATEGORIES.filter(category => items.some(item => item.category === category));
+    for (const category of ['', ...categories] as const) {
+      const option = document.createElement('button'); option.type = 'button'; option.className = 'category-option';
+      option.dataset.category = category; option.dataset.forBrand = brand;
+      const count = items.filter(item => !category || item.category === category).length;
+      option.textContent = `${category || `All ${brand} items`} (${count})`;
+      option.addEventListener('click', () => {
+        selectedBrand = brand; selectedTypes.clear();
+        if (category) selectedTypes.add(category); else CATEGORIES.forEach(type => selectedTypes.add(type));
+        render(); closeShop(true);
+      });
+      categoryButtons.push({ brand, category, button: option }); panel.append(option);
+    }
+    button.addEventListener('click', () => {
+      if (openBrand === brand) { closeShop(); return; }
+      closeSearch(); closeShop(); navigate('home');
+      selectedBrand = brand; selectedTypes.clear(); CATEGORIES.forEach(type => selectedTypes.add(type));
+      render(); openBrand = brand; panel.hidden = false; button.setAttribute('aria-expanded', 'true');
+      positionBrandDropdown();
     });
-    option.append(input, document.createTextNode(label));
-    filters.append(option);
+    button.addEventListener('keydown', event => {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (openBrand !== brand) button.click();
+        panel.querySelector<HTMLButtonElement>('button')?.focus();
+      }
+    });
+    brandButtons.set(brand, button); brandPanels.set(brand, panel);
+    $('shop-brands').append(button); $('shop-area').append(panel);
+  }
+  $('shop-brands').addEventListener('scroll', positionBrandDropdown);
+  window.addEventListener('resize', positionBrandDropdown);
+
+  for (const container of [$('furniture-filters')]) {
+    for (const category of CATEGORIES) {
+      const option = document.createElement('label');
+      option.className = 'filter-option';
+      const input = document.createElement('input');
+      input.type = 'checkbox'; input.value = category; input.checked = true;
+      input.addEventListener('change', () => {
+        if (input.checked) selectedTypes.add(category); else selectedTypes.delete(category);
+        render();
+      });
+      option.append(input, document.createTextNode(category));
+      categoryInputs.push(input); container.append(option);
+    }
   }
 
-  for (const item of GALLERY) {
-    const card = document.createElement('button');
-    card.className = 'furniture-card';
-    card.type = 'button';
-    card.setAttribute('aria-label', `View ${item.name}`);
-    const img = document.createElement('img');
-    img.className = 'furniture-photo';
-    img.width = 320;
-    img.height = 320;
-    img.alt = item.name;
-    img.src = furnitureThumbnail(item.id);
-    const name = document.createElement('span');
-    name.className = 'furniture-name';
-    name.textContent = item.name;
-    card.append(img, name);
-    card.addEventListener('click', () => { onSelect(item.id); navigate('view'); });
-    cards.set(item.id, card);
-    grid.append(card);
+  // Keep model parsing bounded and defer off-screen thumbnails until they are near the viewport.
+  const thumbnailQueue: Array<() => Promise<void>> = [];
+  let activeThumbnails = 0;
+  function processThumbnails() {
+    while (activeThumbnails < 2 && thumbnailQueue.length) {
+      const task = thumbnailQueue.shift()!;
+      activeThumbnails++;
+      void task().finally(() => { activeThumbnails--; processThumbnails(); });
+    }
   }
+  const loadThumbnail = async (item: GalleryItem, img: HTMLImageElement) => {
+    try {
+      img.src = item.source.kind === 'template' ? furnitureThumbnail(item.source.templateId)
+        : await productThumbnail(item.source.glbUrl);
+      img.dataset.loaded = 'true';
+    } catch {
+      img.alt = `Preview unavailable for ${item.name}. Open to view its 3D model.`;
+      img.dataset.loaded = 'failed';
+    }
+  };
+  const observer: IntersectionObserver | null = 'IntersectionObserver' in window ? new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (!entry.isIntersecting) continue;
+      observer!.unobserve(entry.target);
+      const card = entry.target as HTMLButtonElement;
+      const item = ALL_FURNITURE.find(item => item.id === card.dataset.itemId)!;
+      thumbnailQueue.push(() => loadThumbnail(item, card.querySelector('img')!));
+    }
+    processThumbnails();
+  }, { rootMargin: '160px' }) : null;
+
+  for (const item of ALL_FURNITURE) {
+    const card = document.createElement('button');
+    card.className = 'furniture-card'; card.type = 'button'; card.dataset.itemId = item.id;
+    card.setAttribute('aria-label', `View ${item.name}${item.brand === 'Templates' ? '' : `, ${item.brand}`}`);
+    const img = document.createElement('img');
+    img.className = 'furniture-photo'; img.width = 320; img.height = 320; img.alt = item.name;
+    img.src = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="320" height="320"><rect width="320" height="320" fill="#dadad8"/></svg>');
+    const name = document.createElement('span'); name.className = 'furniture-name'; name.textContent = item.name;
+    const brand = document.createElement('span'); brand.className = 'furniture-brand'; brand.textContent = item.brand;
+    card.append(img, name, brand);
+    card.addEventListener('click', () => { onSelect(item); navigate('view'); });
+    cards.set(item.id, card); grid.append(card);
+    if (observer) observer.observe(card);
+    else thumbnailQueue.push(() => loadThumbnail(item, img));
+  }
+  if (!observer) processThumbnails();
 
   function render() {
-    const results = filterFurniture(GALLERY, search.value, selectedTypes);
+    const results = filterFurniture(ALL_FURNITURE, search.value, selectedTypes, selectedBrand);
     const shown = new Set(results.map(item => item.id));
     for (const [id, card] of cards) card.hidden = !shown.has(id);
-    document.querySelector<HTMLElement>('#gallery-empty')!.hidden = results.length > 0;
-    document.querySelector('#search-count')!.textContent = `${results.length} ${results.length === 1 ? 'piece' : 'pieces'} found`;
-    document.querySelector<HTMLElement>('.filter-dot')!.hidden = search.value.trim() === '' && selectedTypes.size === GALLERY.length;
-  }
-
-  function reset() {
-    search.value = '';
-    for (const input of filters.querySelectorAll<HTMLInputElement>('input')) {
-      input.checked = true;
-      selectedTypes.add(input.value as TemplateId);
+    for (const input of categoryInputs) input.checked = selectedTypes.has(input.value as FurnitureCategory);
+    for (const [brand, button] of brandButtons) button.setAttribute('aria-pressed', String(brand === selectedBrand));
+    for (const { brand, category, button } of categoryButtons) {
+      button.setAttribute('aria-pressed', String(brand === selectedBrand && (category === '' ? selectedTypes.size === CATEGORIES.length
+        : selectedTypes.size !== CATEGORIES.length && selectedTypes.has(category))));
     }
-    render();
+    const active = search.value.trim() !== '' || selectedTypes.size !== CATEGORIES.length || selectedBrand !== '';
+    $('gallery-empty').hidden = results.length > 0;
+    const count = `${results.length} ${results.length === 1 ? 'piece' : 'pieces'}`;
+    $('search-count').textContent = `${count} found`;
+    $('gallery-count').textContent = count;
+    $('gallery-title').textContent = selectedBrand || 'All furniture';
+    $('clear-shop-filters').hidden = !active;
+    document.querySelector<HTMLElement>('.filter-dot')!.hidden = !active;
+  }
+  function reset() {
+    search.value = ''; selectedBrand = '';
+    CATEGORIES.forEach(category => selectedTypes.add(category)); render();
   }
 
-  toggle.addEventListener('click', () => setSearchOpen(dropdown.hasAttribute('hidden')));
-  document.querySelector('#search-close')!.addEventListener('click', () => setSearchOpen(false, true));
-  document.querySelector('#reset-filters')!.addEventListener('click', reset);
-  document.querySelector('#empty-reset')!.addEventListener('click', reset);
+  toggle.addEventListener('click', () => dropdown.hidden ? openSearch() : closeSearch());
+  $('search-close').addEventListener('click', () => closeSearch(true));
+  for (const id of ['reset-filters', 'empty-reset', 'clear-shop-filters']) $(id).addEventListener('click', reset);
   search.addEventListener('input', render);
   document.addEventListener('pointerdown', event => {
-    if (!(event.target instanceof Node) || !document.querySelector('#search-area')!.contains(event.target)) setSearchOpen(false);
+    if (!(event.target instanceof Node)) return;
+    if (!$('search-area').contains(event.target)) closeSearch();
+    if (!$('shop-area').contains(event.target)) closeShop();
   });
   document.addEventListener('keydown', event => {
-    if (event.key === 'Escape' && !dropdown.hidden) setSearchOpen(false, true);
+    if (event.key !== 'Escape') return;
+    if (!dropdown.hidden) closeSearch(true);
+    if (openBrand) closeShop(true);
   });
 
   function showPage() {
     const requested = location.hash.slice(1);
     const page: Page = requested === 'scan' || requested === 'view' ? requested : 'home';
-    for (const id of ['home', 'scan', 'view']) document.getElementById(`${id}-page`)!.hidden = id !== page;
+    for (const id of ['home', 'scan', 'view']) $(`${id}-page`).hidden = id !== page;
     for (const link of document.querySelectorAll<HTMLAnchorElement>('[data-page]')) {
       if (link.dataset.page === page) link.setAttribute('aria-current', 'page');
       else link.removeAttribute('aria-current');
     }
     document.title = `${page[0].toUpperCase()}${page.slice(1)} · Fit Check AR`;
-    if (page !== 'home') setSearchOpen(false);
+    if (page !== 'home') { closeSearch(); closeShop(); }
     window.scrollTo({ top: 0, behavior: 'instant' });
   }
-
   function navigate(page: Page) {
     if (location.hash !== `#${page}`) location.hash = page;
-    // Update immediately so focus and the displayed panel agree within this event.
     showPage();
   }
-
   window.addEventListener('hashchange', showPage);
-  showPage();
-  render();
+  showPage(); render();
   return { navigate };
 }
