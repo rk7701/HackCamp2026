@@ -7,13 +7,17 @@
     "dev": "vite --host",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host",
-    "test": "vitest run"
+    "test": "vitest run",
+    "server": "node --env-file-if-exists=.env server/index.ts",
+    "server:mock": "node --env-file-if-exists=.env --env-file-if-exists=.env.mock server/index.ts"
   },
   "dependencies": {
     "@google/model-viewer": "^4.4.0",
+    "express": "^5.3.0",
     "three": "~0.183.2"
   },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^24.19.2",
     "@types/three": "~0.183.1",
     "typescript": "^7.0.2",

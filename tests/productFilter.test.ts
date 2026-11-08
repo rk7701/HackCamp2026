@@ -9,9 +9,9 @@ describe('filterProducts', () => {
     expect(ids({ brand: '', type: '', query: '   ' })).toHaveLength(PRODUCTS.length);
   });
 
-  it('every brand and type in the filters has at least one product', () => {
+  it('every brand has products and every product has a known type', () => {
     for (const brand of BRANDS) expect(ids({ brand }).length).toBeGreaterThan(0);
-    for (const type of FURNITURE_TYPES) expect(ids({ type }).length).toBeGreaterThan(0);
+    for (const p of PRODUCTS) expect(FURNITURE_TYPES).toContain(p.type);
   });
 
   it('filters by brand', () => {

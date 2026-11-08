@@ -49,3 +49,35 @@ blender -b --factory-startup -P blender/make_products.py -- public/models/produc
 The script snaps each model to its exact target size and fails if it is off by more than 1 mm;
 `npm test` loads every GLB and checks it again. Link straight to one with
 `?source=product&product=<id>`.
+
+## Add your own furniture from photos (scan server)
+
+The **＋ Add your own furniture from photos** button walks you through a front, side and corner
+photo (plus an optional close-up) and a tape measurement. The photos go to a small server on your
+computer, which:
+
+1. runs **Claude Code** in print mode (`claude -p`, using your Claude login) with only the `Read`
+   tool, inside a folder holding just that scan's photos, and asks for a structured furniture
+   description validated against a JSON schema (`server/spec.ts`);
+2. clamps every value, then runs **Blender** headless (`blender/build_custom.py`) to build the
+   model and snap it to your measurements;
+3. adds it to **My furniture** (stored in `server/data/`) and deletes the photos.
+
+```sh
+npm run build      # the server also serves the built app
+npm run server     # http://localhost:8787  (phone: http://<this computer's IP>:8787)
+```
+
+Optional settings (environment variables or a `.env` file):
+
+| Variable | Purpose |
+| --- | --- |
+| `SCAN_TOKEN` | Passcode required to add or remove furniture (recommended if you expose the server). |
+| `CLAUDE_PATH` | Path to the `claude` executable. Default: `claude` on PATH, then the VS Code extension's copy. |
+| `CLAUDE_MODEL` | Model for the photo analysis, e.g. `sonnet` for faster scans. |
+| `BLENDER_PATH` | Path to Blender. Default: newest under `C:\Program Files\Blender Foundation`. |
+| `VISION_MODE=mock` | Skip Claude and guess a shape from the measurements (for testing). |
+| `PORT`, `DATA_DIR` | Server port (8787) and where models are stored. |
+
+This uses your personal Claude subscription and is meant for your own use. Scans run one at a
+time and take roughly 20–60 seconds. Open the app at `#add` to jump straight into the scanner.

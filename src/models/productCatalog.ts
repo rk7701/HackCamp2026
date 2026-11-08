@@ -28,23 +28,14 @@ export type ColorPart = {
 export const BRANDS = ['IKEA', 'Article', 'West Elm', 'Structube'] as const;
 export type Brand = (typeof BRANDS)[number];
 
-export const FURNITURE_TYPES = [
-  'Sofas',
-  'Armchairs',
-  'Coffee & side tables',
-  'Shelving & bookcases',
-  'Dressers & chests',
-  'Nightstands',
-  'Beds',
-  'Desks',
-] as const;
-export type FurnitureType = (typeof FURNITURE_TYPES)[number];
+import { FURNITURE_TYPES, MY_FURNITURE, type FurnitureType } from '../catalog/furnitureTypes';
+export { FURNITURE_TYPES, MY_FURNITURE, type FurnitureType };
 
 export type Product = {
   id: string;
   label: string;
   /** The company whose product this model is sized like. */
-  brand: Brand;
+  brand: Brand | typeof MY_FURNITURE;
   type: FurnitureType;
   /** Which retail product this model is sized like. */
   sizedLike: string;
@@ -53,6 +44,8 @@ export type Product = {
   size: DimensionsM;
   colorParts: ColorPart[];
   glbUrl: string;
+  /** Present for furniture the user built from their own photos. */
+  custom?: { createdAt: string; notes: string };
 };
 
 const cm = (width: number, depth: number, height: number): DimensionsM => ({
@@ -443,8 +436,21 @@ const RAW: Omit<Product, 'glbUrl'>[] = [
 
 export const PRODUCTS: Product[] = RAW.map((p) => ({ ...p, glbUrl: glb(p.id) }));
 
+// ---------- Furniture the user added from photos (loaded from the scan server) ----------
+
+let customProducts: Product[] = [];
+
+export function setCustomProducts(list: Product[]) {
+  customProducts = list;
+}
+
+/** User-added furniture first, then the built-in catalogue. */
+export function allProducts(): Product[] {
+  return [...customProducts, ...PRODUCTS];
+}
+
 export function getProduct(id: string): Product | undefined {
-  return PRODUCTS.find((p) => p.id === id);
+  return allProducts().find((p) => p.id === id);
 }
 
 export type ColorChoices = Record<string, number>; // part label -> option index
@@ -469,7 +475,7 @@ export function describeColors(product: Product, choices: ColorChoices): string 
   return product.colorParts.map((p) => (p.options[choices[p.label] ?? 0] ?? p.options[0]).name).join(' / ');
 }
 
-export type ProductFilter = { brand?: Brand | ''; type?: FurnitureType | ''; query?: string };
+export type ProductFilter = { brand?: string; type?: string; query?: string };
 
 /** Lowercase and strip accents so "poang" finds "POÄNG". */
 const fold = (text: string) => text.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();

@@ -19,16 +19,17 @@ import { SCANS, resolveScan, type ScanAsset } from './models/scanCatalog';
 import {
   BRANDS,
   FURNITURE_TYPES,
-  PRODUCTS,
+  MY_FURNITURE,
+  allProducts,
   describeColors,
   filterProducts,
   getProduct,
   resolveColors,
-  type Brand,
+  setCustomProducts,
   type ColorChoices,
-  type FurnitureType,
   type Product,
 } from './models/productCatalog';
+import { ScanFlow } from './scan/scanFlow';
 import { FurnitureViewer } from './viewer/furnitureViewer';
 
 type FurnitureSource =
@@ -55,6 +56,7 @@ const els = {
   resetView: $<HTMLButtonElement>('reset-view'),
   productPanel: $('product-panel'),
   productSearch: $<HTMLInputElement>('product-search'),
+  addOwn: $<HTMLButtonElement>('add-own'),
   brandFilter: $<HTMLSelectElement>('brand-filter'),
   typeFilter: $<HTMLSelectElement>('type-filter'),
   productCount: $('product-count'),
@@ -75,7 +77,7 @@ const DEBOUNCE_MS = 350;
 const state = {
   mode: 'template' as Mode,
   templateId: 'table' as TemplateId,
-  productId: PRODUCTS[0].id,
+  productId: allProducts()[0].id,
   /** Chosen colour option per product and part. */
   colorChoices: {} as Record<string, ColorChoices>,
   unit: 'cm' as Unit,
@@ -196,7 +198,15 @@ function renderShown() {
     return;
   }
   const u = state.unit;
-  const prefix = state.shown?.kind === 'scan' ? 'Measured: ' : state.shown?.kind === 'product' ? 'Sized like product: ' : '';
+  const shown = state.shown;
+  const prefix =
+    shown?.kind === 'scan'
+      ? 'Measured: '
+      : shown?.kind === 'product'
+        ? getProduct(shown.productId)?.custom
+          ? 'Your measurements: '
+          : 'Sized like product: '
+        : '';
   els.dimsBadge.textContent = `${prefix}W ${formatLength(size.width, u)} × D ${formatLength(size.depth, u)} × H ${formatLength(size.height, u)}`;
   updateFit();
 }
@@ -326,6 +336,20 @@ function renderProductInfo() {
   if (!p) return;
   const u = state.unit;
   els.productInfo.innerHTML = '';
+  if (p.custom) {
+    const text = document.createElement('span');
+    text.textContent =
+      `Built from your photos in ${describeColors(p, choicesFor(p.id))}, scaled to your measurements: ` +
+      `${formatLength(p.size.width, u)} wide, ${formatLength(p.size.depth, u)} deep, ${formatLength(p.size.height, u)} high. ` +
+      (p.custom.notes ? `${p.custom.notes} ` : '');
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.className = 'link-button';
+    remove.textContent = 'Remove from My furniture';
+    remove.addEventListener('click', () => void removeCustom(p));
+    els.productInfo.append(text, remove);
+    return;
+  }
   const sized = document.createElement('span');
   sized.textContent =
     `Sized like the ${p.sizedLike} in ${describeColors(p, choicesFor(p.id))}: ${formatLength(p.size.width, u)} wide, ` +
@@ -470,18 +494,32 @@ document.querySelectorAll<HTMLInputElement>('input[name="source"]').forEach((r) 
 
 els.resetView.addEventListener('click', () => viewer.resetView());
 
-for (const b of BRANDS) els.brandFilter.add(new Option(b, b));
-for (const t of FURNITURE_TYPES) els.typeFilter.add(new Option(t, t));
+/** Fill a filter <select> with the values present in the catalogue, keeping the current choice. */
+function fillFilter(select: HTMLSelectElement, allLabel: string, values: string[]) {
+  const current = select.value;
+  select.replaceChildren(new Option(allLabel, ''), ...values.map((v) => new Option(v, v)));
+  select.value = values.includes(current) ? current : '';
+}
+
+function refreshFilters() {
+  const present = allProducts();
+  const brands = [MY_FURNITURE, ...BRANDS].filter((b) => present.some((p) => p.brand === b));
+  const types = FURNITURE_TYPES.filter((t) => present.some((p) => p.type === t));
+  fillFilter(els.brandFilter, 'All brands', brands);
+  fillFilter(els.typeFilter, 'All types', [...types]);
+}
+refreshFilters();
 
 /** Rebuild the product list from the search box and filters. Does not load a model by itself. */
 function renderProductList() {
-  const results = filterProducts(PRODUCTS, {
-    brand: els.brandFilter.value as Brand | '',
-    type: els.typeFilter.value as FurnitureType | '',
+  const all = allProducts();
+  const results = filterProducts(all, {
+    brand: els.brandFilter.value,
+    type: els.typeFilter.value,
     query: els.productSearch.value,
   });
   els.productCount.textContent =
-    results.length === PRODUCTS.length ? `${results.length} products` : `${results.length} of ${PRODUCTS.length} products`;
+    results.length === all.length ? `${results.length} products` : `${results.length} of ${all.length} products`;
   els.productList.innerHTML = '';
   if (!results.length) {
     const li = document.createElement('li');
@@ -501,7 +539,7 @@ function renderProductList() {
     name.textContent = p.label;
     const meta = document.createElement('span');
     meta.className = 'product-meta';
-    meta.textContent = `${p.type} · sized like ${p.sizedLike}`;
+    meta.textContent = p.custom ? `${p.type} · built from your photos` : `${p.type} · sized like ${p.sizedLike}`;
     button.append(name, meta);
     button.addEventListener('click', () => selectProduct(p.id));
     li.append(button);
@@ -517,6 +555,70 @@ function selectProduct(id: string) {
   }
   void showProduct(getProduct(id)!);
 }
+
+// ---------- My furniture (built from photos by the scan server) ----------
+
+async function loadCustomProducts() {
+  try {
+    const res = await fetch('api/custom-products');
+    if (!res.ok) return;
+    setCustomProducts((await res.json()) as Product[]);
+    refreshFilters();
+    renderProductList();
+    // A deep link to a My furniture item can only be opened once the list has arrived.
+    const q = new URLSearchParams(location.search);
+    const linked = getProduct(q.get('product') ?? '');
+    if (q.get('source') === 'product' && linked?.custom && state.shown?.kind !== 'product') {
+      state.productId = linked.id;
+      document.querySelector<HTMLInputElement>('input[name="source"][value="product"]')!.checked = true;
+      setMode('product');
+      renderProductList();
+    }
+  } catch {
+    /* No scan server (e.g. static hosting): the built-in catalogue still works. */
+  }
+}
+
+async function removeCustom(p: Product) {
+  if (!confirm(`Remove "${p.label}" from My furniture? This deletes its model.`)) return;
+  const headers: Record<string, string> = {};
+  try {
+    headers['x-scan-token'] = localStorage.getItem('scan-token') ?? '';
+  } catch {
+    /* ignore */
+  }
+  const res = await fetch(`api/custom-products/${encodeURIComponent(p.id)}`, { method: 'DELETE', headers });
+  if (!res.ok && res.status !== 404) {
+    setStatus('Could not remove it. Check the scan passcode.', 'error');
+    return;
+  }
+  setCustomProducts(allProducts().filter((x) => x.custom && x.id !== p.id));
+  refreshFilters();
+  renderProductList();
+  selectProduct(allProducts()[0].id);
+}
+
+const scanFlow = new ScanFlow({
+  unit: () => state.unit,
+  onAdded: (product) => {
+    setCustomProducts([product, ...allProducts().filter((x) => x.custom && x.id !== product.id)]);
+    refreshFilters();
+    els.brandFilter.value = '';
+    els.typeFilter.value = '';
+    els.productSearch.value = '';
+    renderProductList();
+    if (state.mode !== 'product') {
+      document.querySelector<HTMLInputElement>('input[name="source"][value="product"]')!.checked = true;
+      state.productId = product.id;
+      setMode('product');
+    } else {
+      selectProduct(product.id);
+    }
+  },
+});
+els.addOwn.addEventListener('click', () => void scanFlow.open());
+// Opening the app at #add goes straight to the scanner (handy for a QR code).
+if (location.hash === '#add') void scanFlow.open();
 
 els.productSearch.addEventListener('input', renderProductList);
 els.brandFilter.addEventListener('change', renderProductList);
@@ -539,6 +641,8 @@ viewer.el.addEventListener('ar-status', (e) => {
 });
 
 // ---------- Start ----------
+
+void loadCustomProducts();
 
 for (const f of allFields) f.unit.textContent = state.unit;
 fillDims(TEMPLATES[state.templateId].defaults);

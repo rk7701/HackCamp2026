@@ -3,3 +3,6 @@ dist
 *.local
 .DS_Store
 debug.log
+server/data
+.env
+.env.*

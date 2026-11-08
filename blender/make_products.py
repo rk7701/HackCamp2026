@@ -175,6 +175,16 @@ def drawer_grid(x0, x1, z0, z1, y_front, cols, rows, front_mat, gap_mat, handle,
             elif handle == "tab":  # small metal tab pull near the top edge
                 box_from(cx - 0.035, cx + 0.035, y_front - thickness - 0.012, y_front - thickness,
                          fz1 - 0.035, fz1 - 0.02, handle_mat or M()["metal"], 0.002)
+            elif handle == "bar":  # horizontal bar pull centred on the front
+                bw = min(0.16, (fx1 - fx0) * 0.4)
+                box_from(cx - bw / 2, cx + bw / 2, y_front - thickness - 0.02, y_front - thickness,
+                         (fz0 + fz1) / 2 - 0.007, (fz0 + fz1) / 2 + 0.007, handle_mat or M()["metal"], 0.003)
+            elif handle in ("vbar_left", "vbar_right"):  # vertical door pull beside the inner edge
+                hx = fx0 + 0.045 if handle == "vbar_left" else fx1 - 0.045
+                hh = min(0.2, (fz1 - fz0) * 0.3)
+                zc = fz1 - hh / 2 - 0.06 if (fz1 - fz0) > 0.5 else (fz0 + fz1) / 2
+                box_from(hx - 0.007, hx + 0.007, y_front - thickness - 0.02, y_front - thickness,
+                         zc - hh / 2, zc + hh / 2, handle_mat or M()["metal"], 0.003)
         z -= rh
 
 
@@ -699,4 +709,7 @@ def main():
     print(f"Exported {len(manifest)} models to {OUT_DIR}")
 
 
-main()
+
+# Other scripts (build_custom.py) load this file as a library without exporting the catalogue.
+if not os.environ.get("FURNITURE_LIB_ONLY"):
+    main()
