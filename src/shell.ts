@@ -384,6 +384,8 @@ export function initShell(onSelect: (item: GalleryItem) => void, onDelete?: (ite
       else link.removeAttribute('aria-current');
     }
     document.title = `${page[0].toUpperCase()}${page.slice(1)} · Fit Check AR`;
+    // The brand bar only belongs to the Home gallery.
+    shopArea.hidden = page !== 'home';
     if (page !== 'home') {
       closeSearch();
       closeShop();
