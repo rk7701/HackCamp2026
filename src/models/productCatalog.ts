@@ -45,7 +45,7 @@ export type Product = {
   colorParts: ColorPart[];
   glbUrl: string;
   /** Present for furniture the user built from their own photos. */
-  custom?: { createdAt: string; notes: string };
+  custom?: { createdAt: string; notes: string; stlUrl?: string };
 };
 
 const cm = (width: number, depth: number, height: number): DimensionsM => ({

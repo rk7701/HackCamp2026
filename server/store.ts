@@ -1,9 +1,8 @@
-/** "My furniture": products built from the user's photos, kept in server/data on this computer. */
+/** "My furniture": models Hunyuan3D built from the user's photos, kept in server/data on this computer. */
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { MY_FURNITURE } from '../src/catalog/furnitureTypes.ts';
-import type { BuildResult } from './blender.ts';
-import type { BuildSpec } from './spec.ts';
+import type { MeshSize } from './hunyuan.ts';
 
 export const DATA_DIR = resolve(process.env.DATA_DIR ?? join(import.meta.dirname, 'data'));
 export const MODELS_DIR = join(DATA_DIR, 'models');
@@ -27,12 +26,13 @@ export type CustomProduct = {
   size: { width: number; depth: number; height: number };
   colorParts: ColorPart[];
   glbUrl: string;
-  custom: { createdAt: string; notes: string };
+  custom: { createdAt: string; notes: string; stlUrl?: string };
 };
 
+/** The generated model has no texture; its single material starts neutral grey and can be recoloured. */
 const MAIN_PALETTE: ColorOption[] = [
-  { name: 'White', hex: '#f1f0ec' },
   { name: 'Light grey', hex: '#b8b5af' },
+  { name: 'White', hex: '#f1f0ec' },
   { name: 'Charcoal', hex: '#4b4b4e' },
   { name: 'Black', hex: '#232323' },
   { name: 'Beige', hex: '#d9c9ac' },
@@ -43,54 +43,29 @@ const MAIN_PALETTE: ColorOption[] = [
   { name: 'Walnut', hex: '#6e4a2f' },
 ];
 
-const FRAME_PALETTE: ColorOption[] = [
-  { name: 'Light oak', hex: '#c8a26b' },
-  { name: 'Walnut', hex: '#5b3b25' },
-  { name: 'Black', hex: '#1f1e1d' },
-  { name: 'White', hex: '#efede8' },
-  { name: 'Brass', hex: '#b08d57' },
-];
-
 const mm = (m: number) => Math.round(m * 1000) / 1000;
-const capitalize = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
-/** The photographed colour comes first so the model file's built-in colour is option 0. */
-function withPhotoColour(name: string, hex: string, palette: ColorOption[]): ColorOption[] {
-  return [{ name: `${capitalize(name)} (from your photos)`, hex }, ...palette.filter((o) => o.hex !== hex)];
-}
-
-export function toProduct(id: string, spec: BuildSpec, result: BuildResult): CustomProduct {
-  const parts: ColorPart[] = [
-    { label: 'Main', materials: ['Main finish'], options: withPhotoColour(spec.colors.main_name, spec.colors.main_hex, MAIN_PALETTE) },
-  ];
-  if (result.materials.includes('Frame finish')) {
-    parts.push({
-      label: 'Frame',
-      materials: ['Frame finish'],
-      options: withPhotoColour(spec.colors.frame_name, spec.colors.frame_hex, FRAME_PALETTE),
-    });
-  }
+export function toProduct(id: string, title: string, size: MeshSize, createdAt = new Date()): CustomProduct {
   return {
     id,
-    label: spec.name,
+    label: title,
     brand: MY_FURNITURE,
-    type: spec.furniture_type,
-    sizedLike: 'your photos and measurements',
+    type: 'Other',
+    sizedLike: 'your photos',
     sourceUrl: '',
-    size: { width: mm(result.width), depth: mm(result.depth), height: mm(result.height) },
-    colorParts: parts,
+    size: { width: mm(size.width), depth: mm(size.depth), height: mm(size.height) },
+    colorParts: [{ label: 'Main', materials: ['Main finish'], options: MAIN_PALETTE }],
     glbUrl: `custom-models/${id}.glb`,
-    custom: { createdAt: new Date().toISOString(), notes: spec.notes },
+    custom: { createdAt: createdAt.toISOString(), notes: '', stlUrl: `custom-models/${id}.stl` },
   };
 }
 
 export function listProducts(): CustomProduct[] {
   if (!existsSync(CATALOG)) return [];
-  try {
-    return JSON.parse(readFileSync(CATALOG, 'utf8'));
-  } catch {
-    return [];
-  }
+  const products: unknown = JSON.parse(readFileSync(CATALOG, 'utf8'));
+  if (!Array.isArray(products)) throw new Error('The saved furniture catalogue could not be read.');
+  // Never silently replace an unreadable catalogue with just the newest scan.
+  return products as CustomProduct[];
 }
 
 function save(list: CustomProduct[]) {
@@ -109,5 +84,6 @@ export function removeProduct(id: string): boolean {
   if (next.length === list.length) return false;
   save(next);
   rmSync(join(MODELS_DIR, `${id}.glb`), { force: true });
+  rmSync(join(MODELS_DIR, `${id}.stl`), { force: true });
   return true;
 }

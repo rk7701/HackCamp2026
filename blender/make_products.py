@@ -710,6 +710,6 @@ def main():
 
 
 
-# Other scripts (build_custom.py) load this file as a library without exporting the catalogue.
+# Set FURNITURE_LIB_ONLY=1 to load this file as a library without exporting the catalogue.
 if not os.environ.get("FURNITURE_LIB_ONLY"):
     main()

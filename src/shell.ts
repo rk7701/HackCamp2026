@@ -18,7 +18,7 @@ const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getEleme
  * switching via the URL hash, and the bottom navigation. refresh() rebuilds the gallery when the
  * catalogue changes (e.g. a new My furniture item).
  */
-export function initShell(onSelect: (item: GalleryItem) => void) {
+export function initShell(onSelect: (item: GalleryItem) => void, onDelete?: (item: GalleryItem) => Promise<void>) {
   const toggle = $<HTMLButtonElement>('search-toggle');
   const dropdown = $('search-dropdown');
   const search = $<HTMLInputElement>('furniture-search');
@@ -36,7 +36,7 @@ export function initShell(onSelect: (item: GalleryItem) => void) {
   const brandButtons = new Map<string, HTMLButtonElement>();
   const categoryButtons: Array<{ brand: string; category: FurnitureCategory | ''; button: HTMLButtonElement }> = [];
   const categoryInputs: HTMLInputElement[] = [];
-  const cards = new Map<string, HTMLButtonElement>();
+  const cards = new Map<string, HTMLElement>();
   const thumbnails = new Map<string, string>(); // survives rebuilds
 
   function closeSearch(restoreFocus = false) {
@@ -263,8 +263,39 @@ export function initShell(onSelect: (item: GalleryItem) => void) {
         onSelect(item);
         navigate('view');
       });
-      cards.set(item.id, card);
-      grid.append(card);
+      if (item.deletable && onDelete) {
+        const container = document.createElement('div');
+        container.className = 'furniture-card-container';
+        const remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'furniture-delete';
+        remove.textContent = 'Delete';
+        remove.setAttribute('aria-label', `Delete ${item.name} from My furniture`);
+        const error = document.createElement('p');
+        error.className = 'furniture-delete-error';
+        error.setAttribute('role', 'alert');
+        error.hidden = true;
+        remove.addEventListener('click', async () => {
+          remove.disabled = true;
+          remove.textContent = 'Deleting…';
+          error.hidden = true;
+          try {
+            await onDelete(item);
+          } catch (e) {
+            error.textContent = e instanceof Error ? e.message : 'Could not delete this furniture. Try again.';
+            error.hidden = false;
+          } finally {
+            remove.disabled = false;
+            remove.textContent = 'Delete';
+          }
+        });
+        container.append(card, remove, error);
+        cards.set(item.id, container);
+        grid.append(container);
+      } else {
+        cards.set(item.id, card);
+        grid.append(card);
+      }
       if (thumbnails.has(item.id)) continue;
       if (observer) observer.observe(card);
       else thumbnailQueue.push(() => loadThumbnail(item, img));

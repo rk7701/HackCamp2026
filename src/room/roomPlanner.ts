@@ -98,6 +98,13 @@ export class RoomPlanner {
     return this.plan.items.length;
   }
 
+  /** A deleted saved model can no longer be loaded in a room preview. */
+  removeProduct(productId: string) {
+    this.plan.items = this.plan.items.filter((item) => item.ref.kind !== 'product' || item.ref.productId !== productId);
+    if (!this.plan.items.some((item) => item.uid === this.selected)) this.selected = null;
+    this.changed();
+  }
+
   /** Re-render with the current unit and catalogue (labels, picker). */
   refresh() {
     this.fillRoomInputs();

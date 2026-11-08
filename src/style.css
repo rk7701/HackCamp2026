@@ -86,6 +86,10 @@ input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); width
 .home-page { padding-top: 18px; }
 .furniture-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); align-items: start; gap: 12px; max-width: 720px; }
 .furniture-card { display: block; min-width: 0; text-align: left; border: 0; background: transparent; padding: 0; border-radius: 13px; }
+.furniture-card-container { min-width: 0; }
+.furniture-card-container .furniture-card { width: 100%; }
+.furniture-delete { display: block; margin-top: 6px; padding: 8px 4px; min-height: 44px; border: 0; background: transparent; color: var(--error); font-size: 0.85rem; text-decoration: underline; }
+.furniture-delete-error { color: var(--error); font-size: 0.8rem; overflow-wrap: anywhere; }
 .furniture-photo { display: block; width: 100%; height: auto; aspect-ratio: 1; object-fit: contain; border-radius: 13px; background: #dadad8; transition: transform .16s, box-shadow .16s; }
 .furniture-card:hover .furniture-photo, .furniture-card:focus-visible .furniture-photo { transform: translateY(-3px); box-shadow: 0 6px 15px #0004; }
 .furniture-name { display: block; margin-top: 8px; color: #aaa9a5; font-size: .72rem; line-height: 1.35; }
@@ -188,6 +192,8 @@ summary { cursor: pointer; font-weight: 650; }
 .scan-thumbs { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px; }
 .scan-thumbs img { width: 100%; aspect-ratio: 1; object-fit: cover; border-radius: 6px; }
 .scan-status { font-weight: 600; }
+.scan-build-progress { display: block; width: 100%; height: 16px; accent-color: var(--accent, #3c8066); }
+.scan-build-count { margin-top: 8px; font-variant-numeric: tabular-nums; }
 .scan-spinner {
   width: 36px; height: 36px; margin: 8px 0 12px; border-radius: 50%;
   border: 4px solid var(--border); border-top-color: var(--accent); animation: scan-spin 0.9s linear infinite;

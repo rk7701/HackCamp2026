@@ -1,55 +1,58 @@
 /**
- * Guided "Add your own furniture" flow: walks the user through a few photos and a tape measurement,
- * sends them to the scan server (server/index.ts), and reports progress until the model is built.
+ * Guided "Add your own furniture" flow: a front photo (plus side and back photos when the server runs
+ * the multiview model), a name and a height. Sends them
+ * to the scan server (server/index.ts), where Hunyuan3D builds the shape on the GPU, and reports
+ * progress until the model is in My furniture.
  */
-import { DIMENSION_KEYS, formatLength, parseLength, type DimensionKey, type Unit } from '../domain/dimensions';
+import { formatLength, parseLength, type Unit } from '../domain/dimensions';
 import type { Product } from '../models/productCatalog';
+import { preparePhoto } from './preparePhoto';
+import { scanErrorMessage, type ScanProgress } from './progress';
 
-type Shot = { role: 'front' | 'side' | 'angle' | 'detail'; title: string; tip: string; required: boolean; cam: [number, number] };
+/** View names are Hunyuan3D-2mv's: "left" is the piece's own left side (your right as you face it). */
+type View = 'front' | 'left' | 'back' | 'right';
+type Shot = { view: View; title: string; tip: string; required: boolean; cam: [number, number] };
 
 const SHOTS: Shot[] = [
   {
-    role: 'front',
+    view: 'front',
     title: 'Front photo',
     tip: 'Stand back so the whole piece fits in the frame. Hold the phone at about mid-height and face it straight on.',
     required: true,
-    cam: [60, 92],
+    cam: [60, 96],
   },
   {
-    role: 'side',
-    title: 'Side photo',
-    tip: 'Walk around to its left or right side. Keep the whole piece in the frame, phone at mid-height.',
-    required: true,
-    cam: [108, 50],
-  },
-  {
-    role: 'angle',
-    title: 'Corner photo',
-    tip: 'From a front corner, hold the phone a little above the piece so the top, front and side all show.',
-    required: true,
-    cam: [102, 88],
-  },
-  {
-    role: 'detail',
-    title: 'Detail photo (optional)',
-    tip: 'A close-up of the legs, handles or fabric helps get the style and colour right.',
+    view: 'left',
+    title: 'Side photo, to your right (optional)',
+    tip: 'From the front, walk around to your right so you face that side straight on. Keep the whole piece in the frame.',
     required: false,
-    cam: [44, 70],
+    cam: [112, 50],
+  },
+  {
+    view: 'back',
+    title: 'Back photo (optional)',
+    tip: 'Walk around behind it and face the back straight on. Skip this if it is against a wall.',
+    required: false,
+    cam: [60, 8],
+  },
+  {
+    view: 'right',
+    title: 'Side photo, to your left (optional)',
+    tip: 'From the front, walk around to your left so you face that side straight on. Keep the whole piece in the frame.',
+    required: false,
+    cam: [8, 50],
   },
 ];
 
-const SIZE_LIMITS: Record<DimensionKey, { min: number; max: number }> = {
-  width: { min: 0.2, max: 4 },
-  depth: { min: 0.2, max: 4 },
-  height: { min: 0.2, max: 3 },
-};
-const LABELS: Record<DimensionKey, string> = { width: 'Width', depth: 'Depth', height: 'Height' };
+/** Same limits as the server (server/scanRequest.ts). */
+const HEIGHT_RANGE = { min: 0.1, max: 3 };
+const TITLE_MAX = 60;
 
 /** Top-down sketch: the furniture as a rectangle and where to stand. */
 function diagram(cam: [number, number]): string {
   const [cx, cy] = cam;
   const ang = (Math.atan2(50 - cy, 60 - cx) * 180) / Math.PI;
-  return `<svg class="scan-diagram" viewBox="0 0 120 110" role="img" aria-label="Where to stand, seen from above">
+  return `<svg class="scan-diagram" viewBox="0 0 120 104" role="img" aria-label="Where to stand, seen from above">
     <rect x="30" y="34" width="60" height="32" rx="4" class="scan-diagram-piece"/>
     <text x="60" y="54" text-anchor="middle" class="scan-diagram-label">furniture</text>
     <text x="60" y="78" text-anchor="middle" class="scan-diagram-label">front</text>
@@ -58,18 +61,6 @@ function diagram(cam: [number, number]): string {
       <path d="M5 -4 L12 -8 L12 8 L5 4 Z" class="scan-diagram-cam"/>
     </g>
   </svg>`;
-}
-
-/** Shrink a photo to at most `max` px on its long side and re-encode as JPEG. */
-async function downscale(file: File, max = 1600): Promise<string> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement('canvas');
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext('2d')!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  bitmap.close();
-  return canvas.toDataURL('image/jpeg', 0.85);
 }
 
 function readToken(): string {
@@ -90,6 +81,14 @@ function writeToken(t: string) {
 
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
 
+type Health = {
+  worker: 'mock' | 'missing' | 'idle' | 'loading' | 'ready' | 'error';
+  workerError: string;
+  /** Views the server's model uses: just "front" for Hunyuan3D-2mini, all four for 2mv. */
+  views?: View[];
+  needsToken: boolean;
+};
+
 export type ScanFlowOptions = {
   unit: () => Unit;
   /** Called when the server has added the new product. */
@@ -100,9 +99,10 @@ export class ScanFlow {
   private dialog: HTMLDialogElement;
   private body: HTMLElement;
   private step = 0;
-  private photos = new Map<Shot['role'], string>();
-  private sizeText: Record<DimensionKey, string> = { width: '', depth: '', height: '' };
-  private needsToken = false;
+  private photos = new Map<View, string>();
+  private title = '';
+  private heightText = '';
+  private health: Health | null = null;
 
   constructor(private opts: ScanFlowOptions) {
     this.dialog = document.createElement('dialog');
@@ -122,18 +122,19 @@ export class ScanFlow {
   async open() {
     this.step = 0;
     this.photos.clear();
+    this.title = '';
+    this.heightText = '';
     this.dialog.showModal();
     this.body.innerHTML = '<p class="note">Checking the scan server…</p>';
     try {
-      const health = await fetch('api/health').then((r) => (r.ok ? r.json() : Promise.reject()));
-      this.needsToken = Boolean(health.needsToken);
-      if (!health.claudeFound) throw new Error('claude');
-    } catch (e) {
-      this.body.innerHTML = `<p class="scan-error">${
-        e instanceof Error && e.message === 'claude'
-          ? 'The scan server is running but cannot find Claude Code on that computer.'
-          : 'The scan server is not running. Start it on the computer with <code>npm run server</code>, then try again.'
-      }</p>`;
+      this.health = await fetch('api/health').then((r) => (r.ok ? r.json() : Promise.reject()));
+    } catch {
+      this.body.innerHTML = `<p class="scan-error">The scan server is not running. Start it on the computer with
+        <code>npm run server</code>, then try again.</p>`;
+      return;
+    }
+    if (this.health!.worker === 'missing') {
+      this.body.innerHTML = '<p class="scan-error">The scan service needs to be set up on the server before it can build models.</p>';
       return;
     }
     this.render();
@@ -143,8 +144,14 @@ export class ScanFlow {
     this.dialog.close();
   }
 
+  /** The photo steps the server's model can use (older servers without `views` get all four). */
+  private shots(): Shot[] {
+    const views = this.health?.views;
+    return views?.length ? SHOTS.filter((s) => views.includes(s.view)) : SHOTS;
+  }
+
   private steps() {
-    return ['intro', ...SHOTS.map((s) => s.role), 'measure', 'review'] as const;
+    return ['intro', ...this.shots().map((s) => s.view), 'details', 'review'] as const;
   }
 
   private render() {
@@ -152,9 +159,9 @@ export class ScanFlow {
     const name = steps[this.step];
     const progress = `<p class="scan-progress">Step ${this.step + 1} of ${steps.length}</p>`;
     if (name === 'intro') this.renderIntro(progress);
-    else if (name === 'measure') this.renderMeasure(progress);
+    else if (name === 'details') this.renderDetails(progress);
     else if (name === 'review') this.renderReview(progress);
-    else this.renderShot(SHOTS.find((s) => s.role === name)!, progress);
+    else this.renderShot(SHOTS.find((s) => s.view === name)!, progress);
     this.body.querySelector<HTMLElement>('h3')?.focus();
   }
 
@@ -186,21 +193,36 @@ export class ScanFlow {
   };
 
   private renderIntro(progress: string) {
+    const h = this.health!;
+    const single = this.shots().length === 1;
+    const workerNote =
+      h.worker === 'mock'
+        ? '<p class="note"><strong>Test mode:</strong> the server makes a placeholder box.</p>'
+        : h.worker === 'error'
+          ? '<p class="note">The last scan had a problem. The service will try again when you build.</p>'
+          : h.worker === 'loading'
+            ? '<p class="note">The scan service is starting. You can take your photos in the meantime.</p>'
+            : '';
     this.body.innerHTML = `${progress}
       <h3 tabindex="-1">Before you start</h3>
       <ul class="scan-list">
-        <li>Clear things off and around the piece.</li>
-        <li>Turn on the lights or open the curtains. Daylight gives the truest colour.</li>
-        <li>Have a tape measure ready for width, depth and height.</li>
+        <li>Clear things off and around the piece, and turn on the lights.</li>
+        ${
+          single
+            ? '<li>You need one photo, straight on from the front, with the whole piece in the frame.</li>'
+            : '<li>A front photo is required. Photos of the sides and back make the shape much more accurate.</li>'
+        }
+        <li>Have a tape measure ready for its height.</li>
       </ul>
-      <p class="note">You'll take 3 photos, plus an optional close-up. They're sent to the scan server on your
-      computer, where Claude describes the piece and Blender builds the model. The photos are deleted
-      once the model is built.</p>`;
+      <p class="note">Your ${single ? 'photo goes' : 'photos go'} to the scan service, which
+      builds a 3D shape. The model is grey; you can pick a colour afterwards. The
+      ${single ? 'photo is' : 'photos are'} deleted once it's built.</p>
+      ${workerNote}`;
     this.nav('Start', true, this.advance);
   }
 
   private renderShot(shot: Shot, progress: string) {
-    const existing = this.photos.get(shot.role);
+    const existing = this.photos.get(shot.view);
     this.body.innerHTML = `${progress}
       <h3 tabindex="-1">${shot.title}</h3>
       <div class="scan-shot">
@@ -209,9 +231,10 @@ export class ScanFlow {
       </div>
       ${existing ? `<img class="scan-preview" src="${existing}" alt="${shot.title} you took" />` : ''}
       <label class="primary scan-take">
-        ${existing ? 'Retake photo' : 'Take photo'}
+        ${existing ? 'Retake photo' : 'Take or choose photo'}
         <input type="file" accept="image/*" capture="environment" hidden />
       </label>
+      ${existing && !shot.required ? '<button type="button" class="link-button scan-remove">Remove this photo</button>' : ''}
       <p class="scan-error" role="alert"></p>`;
     const input = this.body.querySelector<HTMLInputElement>('input[type=file]')!;
     const error = this.body.querySelector<HTMLElement>('.scan-error')!;
@@ -220,95 +243,110 @@ export class ScanFlow {
       if (!file) return;
       error.textContent = 'Preparing photo…';
       try {
-        this.photos.set(shot.role, await downscale(file));
+        this.photos.set(shot.view, await preparePhoto(file));
         this.render();
       } catch {
         error.textContent = 'That photo could not be read. Try taking it again.';
       }
     });
-    const ready = !shot.required || this.photos.has(shot.role);
+    this.body.querySelector('.scan-remove')?.addEventListener('click', () => {
+      this.photos.delete(shot.view);
+      this.render();
+    });
+    const ready = !shot.required || this.photos.has(shot.view);
     this.nav(shot.required || existing ? 'Next' : 'Skip', ready, this.advance);
   }
 
-  private renderMeasure(progress: string) {
+  private renderDetails(progress: string) {
     const unit = this.opts.unit();
     this.body.innerHTML = `${progress}
-      <h3 tabindex="-1">Measure it</h3>
-      <p class="note">Measure the widest points, including arms, handles and legs. The model is scaled to these exactly.</p>
-      ${DIMENSION_KEYS.map(
-        (k) => `<div class="field">
-          <label class="field-label" for="scan-${k}">${LABELS[k]}</label>
-          <div class="input-row">
-            <input type="text" inputmode="decimal" id="scan-${k}" value="${esc(this.sizeText[k])}" autocomplete="off" aria-describedby="scan-${k}-error" />
-            <span class="unit">${unit}</span>
-          </div>
-          <p class="field-error" id="scan-${k}-error"></p>
-        </div>`,
-      ).join('')}`;
-    this.nav('Next', true, () => {
-      if (this.readSize()) this.advance();
+      <h3 tabindex="-1">Name and height</h3>
+      <div class="field">
+        <label class="field-label" for="scan-name">Name</label>
+        <input type="text" id="scan-name" maxlength="${TITLE_MAX}" value="${esc(this.title)}" autocomplete="off"
+          placeholder="e.g. Grey reading chair" aria-describedby="scan-name-error" />
+        <p class="field-error" id="scan-name-error"></p>
+      </div>
+      <div class="field">
+        <label class="field-label" for="scan-height">Height</label>
+        <div class="input-row">
+          <input type="text" inputmode="decimal" id="scan-height" value="${esc(this.heightText)}" autocomplete="off"
+            aria-describedby="scan-height-hint scan-height-error" />
+          <span class="unit">${unit}</span>
+        </div>
+        <p class="note" id="scan-height-hint">Floor to the highest point. The model is scaled to this height; width and depth follow from its shape.</p>
+        <p class="field-error" id="scan-height-error"></p>
+      </div>`;
+    this.body.querySelector<HTMLInputElement>('#scan-name')!.addEventListener('input', (e) => {
+      this.title = (e.target as HTMLInputElement).value;
     });
-    for (const k of DIMENSION_KEYS) {
-      this.body.querySelector<HTMLInputElement>(`#scan-${k}`)!.addEventListener('input', (e) => {
-        this.sizeText[k] = (e.target as HTMLInputElement).value;
-      });
-    }
+    this.body.querySelector<HTMLInputElement>('#scan-height')!.addEventListener('input', (e) => {
+      this.heightText = (e.target as HTMLInputElement).value;
+    });
+    this.nav('Next', true, () => {
+      if (this.readDetails()) this.advance();
+    });
   }
 
-  /** Validate the measurements, showing inline errors. Returns meters or null. */
-  private readSize(): Record<DimensionKey, number> | null {
-    const unit = this.opts.unit();
-    const out = {} as Record<DimensionKey, number>;
-    let ok = true;
-    for (const k of DIMENSION_KEYS) {
-      const r = parseLength(this.sizeText[k], unit, SIZE_LIMITS[k], LABELS[k]);
-      const err = this.body.querySelector<HTMLElement>(`#scan-${k}-error`);
-      const input = this.body.querySelector<HTMLInputElement>(`#scan-${k}`);
-      if (err) err.textContent = r.ok ? '' : r.error;
-      input?.setAttribute('aria-invalid', r.ok ? 'false' : 'true');
-      if (r.ok) out[k] = r.meters;
-      else ok = false;
-    }
-    return ok ? out : null;
+  /** Validate the name and height, showing inline errors. */
+  private readDetails(): { title: string; heightM: number } | null {
+    const title = this.title.replace(/\s+/g, ' ').trim();
+    const titleError = !title ? 'Give it a name.' : title.length > TITLE_MAX ? `Keep it under ${TITLE_MAX} characters.` : '';
+    const h = parseLength(this.heightText, this.opts.unit(), HEIGHT_RANGE, 'Height');
+    const set = (id: string, msg: string) => {
+      const err = this.body.querySelector<HTMLElement>(`#${id}-error`);
+      if (err) err.textContent = msg;
+      this.body.querySelector(`#${id}`)?.setAttribute('aria-invalid', msg ? 'true' : 'false');
+    };
+    set('scan-name', titleError);
+    set('scan-height', h.ok ? '' : h.error);
+    return !titleError && h.ok ? { title, heightM: h.meters } : null;
   }
 
   private renderReview(progress: string) {
     const unit = this.opts.unit();
-    const size = this.readSize()!;
-    const thumbs = SHOTS.filter((s) => this.photos.has(s.role))
-      .map((s) => `<img src="${this.photos.get(s.role)}" alt="${s.title}" />`)
+    const details = this.readDetails()!;
+    const thumbs = this.shots()
+      .filter((s) => this.photos.has(s.view))
+      .map((s) => `<img src="${this.photos.get(s.view)}" alt="${s.title}" />`)
       .join('');
     this.body.innerHTML = `${progress}
       <h3 tabindex="-1">Ready to build</h3>
       <div class="scan-thumbs">${thumbs}</div>
-      <p><strong>${formatLength(size.width, unit)} wide × ${formatLength(size.depth, unit)} deep × ${formatLength(size.height, unit)} high</strong></p>
+      <p><strong>${esc(details.title)}</strong>, ${formatLength(details.heightM, unit)} high</p>
       ${
-        this.needsToken
+        this.health!.needsToken
           ? `<div class="field"><label class="field-label" for="scan-token">Scan passcode</label>
              <input type="text" id="scan-token" autocomplete="off" value="${esc(readToken())}" /></div>`
           : ''
       }
-      <p class="note">Building usually takes under a minute.</p>
+      <p class="note">Building usually takes about 30–60 seconds with no queue. Starting the model or waiting for memory can take longer. Your model is saved in My furniture.</p>
       <p class="scan-error" role="alert"></p>`;
-    this.nav('Build my model', true, () => void this.submit(size));
+    this.nav('Build my model', true, () => void this.submit(details));
   }
 
-  private async submit(size: Record<DimensionKey, number>) {
+  private async submit(details: { title: string; heightM: number }) {
     const error = this.body.querySelector<HTMLElement>('.scan-error')!;
     const tokenInput = this.body.querySelector<HTMLInputElement>('#scan-token');
     if (tokenInput) writeToken(tokenInput.value.trim());
     const headers: Record<string, string> = { 'content-type': 'application/json' };
-    if (this.needsToken) headers['x-scan-token'] = readToken();
-    const photos = [...this.photos].map(([role, dataUrl]) => ({ role, dataUrl }));
+    if (this.health!.needsToken) headers['x-scan-token'] = readToken();
+    const photos = this.shots()
+      .filter((s) => this.photos.has(s.view))
+      .map((s) => ({ view: s.view, dataUrl: this.photos.get(s.view)! }));
     error.textContent = 'Uploading photos…';
     this.body.querySelectorAll('button').forEach((b) => (b.disabled = true));
     try {
-      const res = await fetch('api/scans', { method: 'POST', headers, body: JSON.stringify({ photos, size }) });
+      const res = await fetch('api/scans', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ title: details.title, heightM: details.heightM, photos }),
+      });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? 'Upload failed.');
       this.showProgress(data.jobId);
     } catch (e) {
-      error.textContent = e instanceof Error ? e.message : 'Upload failed.';
+      error.textContent = e instanceof Error ? scanErrorMessage(e.message) : 'Upload failed.';
       this.body.querySelectorAll('button').forEach((b) => (b.disabled = false));
     }
   }
@@ -316,15 +354,35 @@ export class ScanFlow {
   private showProgress(jobId: string) {
     this.body.innerHTML = `
       <h3 tabindex="-1">Building your model</h3>
-      <div class="scan-spinner" aria-hidden="true"></div>
-      <p class="scan-status" role="status" aria-live="polite">Uploading…</p>
+      <p class="scan-status" role="status" aria-live="polite">Waiting to start…</p>
+      <progress class="scan-build-progress" max="100" aria-label="Current scan stage"></progress>
+      <p class="scan-build-count note">Waiting for the scan service…</p>
       <p class="note">You can keep using the app. It will appear under My furniture when it's ready.</p>`;
     const status = this.body.querySelector<HTMLElement>('.scan-status')!;
+    const bar = this.body.querySelector<HTMLProgressElement>('.scan-build-progress')!;
+    const count = this.body.querySelector<HTMLElement>('.scan-build-count')!;
+    const updateProgress = (progress?: ScanProgress) => {
+      if (progress?.total && progress.completed !== undefined) {
+        const percent = Math.round(100 * progress.completed / progress.total);
+        bar.value = percent;
+        bar.setAttribute('aria-label', progress.label);
+        count.textContent = `${progress.completed} / ${progress.total} · ${percent}% of this stage`;
+      } else {
+        bar.removeAttribute('value');
+        count.textContent = 'This stage may take a little while.';
+      }
+    };
     // Keeps polling even if the dialog is closed, so the product still gets added.
     const poll = async () => {
       try {
-        const job = await fetch(`api/scans/${jobId}`).then((r) => r.json());
+        const res = await fetch(`api/scans/${jobId}`);
+        if (res.status === 404) {
+          if (this.dialog.open) this.showFailed('The scan server restarted and lost this scan.');
+          return;
+        }
+        const job = await res.json();
         if (job.status === 'done' && job.product) {
+          bar.value = 100;
           this.opts.onAdded(job.product as Product);
           if (this.dialog.open) this.showDone(job.product as Product);
           return;
@@ -333,22 +391,26 @@ export class ScanFlow {
           if (this.dialog.open) this.showFailed(job.message);
           return;
         }
-        if (this.dialog.open) status.textContent = job.message;
+        if (this.dialog.open) {
+          status.textContent = scanErrorMessage(job.message);
+          updateProgress(job.progress);
+        }
       } catch {
         if (this.dialog.open) status.textContent = 'Lost contact with the scan server, retrying…';
       }
-      setTimeout(poll, 1500);
+      setTimeout(poll, 500);
     };
     void poll();
   }
 
   private showDone(product: Product) {
     const unit = this.opts.unit();
+    const stl = product.custom?.stlUrl;
     this.body.innerHTML = `
       <h3 tabindex="-1">Added to My furniture</h3>
-      <p><strong>${esc(product.label)}</strong><br />${formatLength(product.size.width, unit)} ×
-      ${formatLength(product.size.depth, unit)} × ${formatLength(product.size.height, unit)}</p>
-      ${product.custom?.notes ? `<p class="note">${esc(product.custom.notes)}</p>` : ''}`;
+      <p><strong>${esc(product.label)}</strong><br />${formatLength(product.size.width, unit)} wide ×
+      ${formatLength(product.size.depth, unit)} deep × ${formatLength(product.size.height, unit)} high</p>
+      ${stl ? `<p><a href="${esc(stl)}" download="${esc(product.label)}.stl">Download STL</a></p>` : ''}`;
     this.nav('View it', true, () => this.close());
     this.body.querySelector<HTMLButtonElement>('.scan-nav button')!.hidden = true;
   }
@@ -356,8 +418,8 @@ export class ScanFlow {
   private showFailed(message: string) {
     this.body.innerHTML = `
       <h3 tabindex="-1">The model could not be built</h3>
-      <p class="scan-error">${esc(message)}</p>
-      <p class="note">Your photos were not kept. Try again with brighter light and the whole piece in each photo.</p>`;
+      <p class="scan-error">${esc(scanErrorMessage(message))}</p>
+      <p class="note">Nothing was kept on the server. Try again with brighter light and the whole piece in the frame.</p>`;
     this.nav('Try again', true, () => {
       this.step = 1;
       this.render();

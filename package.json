@@ -1,7 +1,7 @@
 {
   "name": "furniture-ar",
   "private": true,
-  "version": "0.1.0",
+  "version": "1.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
@@ -9,7 +9,8 @@
     "preview": "vite preview --host",
     "test": "vitest run",
     "server": "node --env-file-if-exists=.env server/index.ts",
-    "server:mock": "node --env-file-if-exists=.env --env-file-if-exists=.env.mock server/index.ts"
+    "server:mock": "node --env-file-if-exists=.env --env-file-if-exists=.env.mock --env-file=server/mock.env server/index.ts",
+    "hunyuan:setup": "powershell -NoProfile -ExecutionPolicy Bypass -File hunyuan/setup.ps1"
   },
   "dependencies": {
     "@google/model-viewer": "^4.4.0",

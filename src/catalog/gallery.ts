@@ -11,6 +11,7 @@ export type GalleryItem = {
   keywords: string;
   category: FurnitureCategory;
   brand: string;
+  deletable?: boolean;
   source: { kind: 'template'; templateId: TemplateId } | { kind: 'product'; productId: string; glbUrl: string };
 };
 
@@ -26,6 +27,7 @@ function productItem(product: Product): GalleryItem {
     name: product.label,
     category: product.type,
     brand: product.brand,
+    deletable: Boolean(product.custom),
     keywords: [
       product.sizedLike,
       product.custom ? 'my own photos scan' : '',

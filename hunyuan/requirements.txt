@@ -1,0 +1,13 @@
+# Python packages for the Hunyuan3D scan worker (hunyuan/worker.py). Installed by hunyuan/setup.ps1,
+# which installs CUDA builds of torch/torchvision first from the PyTorch index.
+# Shape generation only: the texture model needs ~16 GB VRAM, more than this laptop's GPU has.
+hy3dgen @ git+https://github.com/Tencent-Hunyuan/Hunyuan3D-2@f8db63096c8282cb27354314d896feba5ba6ff8a
+transformers>=4.48,<5
+diffusers
+accelerate
+trimesh
+pymeshlab
+rembg
+onnxruntime
+pillow
+numpy

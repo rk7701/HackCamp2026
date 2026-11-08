@@ -1,66 +1,96 @@
 /**
- * Scan server: photos from the phone -> Claude Code describes the furniture -> Blender builds it
- * -> it is added to "My furniture". Also serves the built app (dist/) so one HTTPS tunnel to this
- * port is enough for the phone.
+ * Scan server: a front photo (or 1-4 views with Hunyuan3D-2mv) + a name + a height from the phone
+ * -> Hunyuan3D on this computer's GPU
+ * builds the shape -> scaled to that height -> added to "My furniture" (GLB for the app and AR,
+ * plus an STL download). Also serves the built app (dist/) so one HTTPS tunnel to this port is
+ * enough for the phone.
  *
- *   npm run build && npm run server        (then open http://<this computer>:8787)
+ *   npm run hunyuan:setup                 (once: Python env with CUDA PyTorch + Hunyuan3D)
+ *   npm run build && npm run server       (then open http://<this computer>:8787)
  *
- * Env (optional, or put them in a .env file): PORT, SCAN_TOKEN, VISION_MODE=mock, CLAUDE_PATH,
- * CLAUDE_MODEL, BLENDER_PATH, DATA_DIR.
+ * Env (optional, or put them in a .env file): PORT, SCAN_TOKEN, HUNYUAN_MODE=mock, HUNYUAN_MODEL, HUNYUAN_PYTHON,
+ * HUNYUAN_TIMEOUT_MS, DATA_DIR.
  */
 import { randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import express, { type NextFunction, type Request, type Response } from 'express';
-import { findBlender, runBlenderBuild, type BuildResult } from './blender.ts';
-import { checkSize, normalizeSpec, type SizeM } from './spec.ts';
-import { addProduct, JOBS_DIR, listProducts, MODELS_DIR, removeProduct, toProduct, type CustomProduct } from './store.ts';
-import { describeMock, describeWithClaudeCode, findClaude, type Photo } from './vision.ts';
+import { generate, MOCK, MODEL, pythonPath, shutdownWorker, SUPPORTED_VIEWS, workerStatus, type GenerateRequest } from './hunyuan.ts';
+import { withScanRetries } from './scanRetry.ts';
+import { scanErrorMessage, type ScanProgress } from '../src/scan/progress.ts';
+import { parseScanRequest, type ScanRequest } from './scanRequest.ts';
+import { addProduct, DATA_DIR, JOBS_DIR, listProducts, MODELS_DIR, removeProduct, toProduct, type CustomProduct } from './store.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
-const MOCK = process.env.VISION_MODE === 'mock';
 const TOKEN = process.env.SCAN_TOKEN ?? '';
-const ROLES = ['front', 'side', 'angle', 'detail'] as const;
-const MAX_PHOTO_BYTES = 6 * 1024 * 1024;
-const DATA_URL = /^data:image\/(jpeg|png|webp);base64,([A-Za-z0-9+/=]+)$/;
 
-type JobStatus = 'queued' | 'analysing' | 'building' | 'done' | 'error';
-type Job = { status: JobStatus; message: string; product?: CustomProduct; updated: number };
+type JobStatus = 'queued' | 'generating' | 'done' | 'error';
+type Job = { status: JobStatus; message: string; product?: CustomProduct; updated: number;
+  progress?: ScanProgress;
+  timings?: { queueMs: number; generationMs: number; saveMs: number; totalMs: number } };
 const jobs = new Map<string, Job>();
+const STATUS_DIR = join(DATA_DIR, 'scan-status');
+mkdirSync(STATUS_DIR, { recursive: true });
 
-// One scan at a time: Claude Code and Blender each get the whole machine.
+// One scan at a time: the GPU only has room for one Hunyuan3D run.
 let queue: Promise<void> = Promise.resolve();
 const enqueue = (task: () => Promise<void>) => {
   queue = queue.then(task, task);
 };
 
-function setJob(id: string, status: JobStatus, message: string, product?: CustomProduct) {
-  jobs.set(id, { status, message, product, updated: Date.now() });
+function setJob(id: string, status: JobStatus, message: string, product?: CustomProduct, timings?: Job['timings']) {
+  const job = { status, message, product, updated: Date.now(), timings };
+  // Completed results survive server restarts as well as the saved catalogue and meshes.
+  if (status === 'done') {
+    try {
+      const path = join(STATUS_DIR, `${id}.json`);
+      writeFileSync(`${path}.tmp`, JSON.stringify(job));
+      renameSync(`${path}.tmp`, path);
+    } catch (error) {
+      // The catalogue and meshes are already saved: do not report a successful scan as failed.
+      console.error('Could not persist scan receipt:', error);
+    }
+  }
+  jobs.set(id, job);
 }
 
-async function runJob(id: string, photos: Photo[], size: SizeM) {
+async function runJob(id: string, scan: Pick<ScanRequest, 'title' | 'heightM'>, images: GenerateRequest['images'], acceptedAt: number) {
   const dir = join(JOBS_DIR, id);
+  const productId = `my-${id.slice(0, 8)}`;
+  const tmpGlb = join(dir, 'model.glb');
+  const tmpStl = join(dir, 'model.stl');
+  const startedAt = Date.now();
   try {
-    setJob(id, 'analysing', MOCK ? 'Mock mode: skipping photo analysis…' : 'Claude is looking at your photos…');
-    const raw = MOCK ? describeMock(size) : await describeWithClaudeCode(dir, photos, size);
-    const spec = normalizeSpec(raw, size);
-    writeFileSync(join(dir, 'spec.json'), JSON.stringify(spec, null, 2));
-
-    setJob(id, 'building', `Building "${spec.name}" in Blender…`);
-    const tmpGlb = join(dir, 'model.glb');
-    const resultPath = join(dir, 'result.json');
-    await runBlenderBuild(join(dir, 'spec.json'), tmpGlb, resultPath);
-    const result: BuildResult = JSON.parse(readFileSync(resultPath, 'utf8'));
-    const productId = `my-${id.slice(0, 8)}`;
+    const worker = workerStatus().state;
+    setJob(
+      id,
+      'generating',
+      MOCK
+        ? 'Mock mode: making a placeholder box…'
+        : worker === 'ready'
+          ? `Building "${scan.title}"…`
+          : 'Starting the scan service (the first scan after a break takes a little longer)…',
+    );
+    const size = await withScanRetries(
+      () => generate({ images, heightM: scan.heightM, outGlb: tmpGlb, outStl: tmpStl }, (progress) => {
+        jobs.set(id, { status: 'generating', message: progress.label, progress, updated: Date.now() });
+      }),
+      (attempt, delayMs) => setJob(id, 'generating', `Waiting for memory to recover; retry ${attempt} of 3 in ${delayMs / 1000} seconds…`),
+    );
+    const generatedAt = Date.now();
     renameSync(tmpGlb, join(MODELS_DIR, `${productId}.glb`));
-    const product = toProduct(productId, spec, result);
+    renameSync(tmpStl, join(MODELS_DIR, `${productId}.stl`));
+    const product = toProduct(productId, scan.title, size);
     addProduct(product);
-    setJob(id, 'done', `Added "${product.label}" to My furniture.`, product);
+    setJob(id, 'done', `Added "${product.label}" to My furniture.`, product, {
+      queueMs: startedAt - acceptedAt, generationMs: generatedAt - startedAt,
+      saveMs: Date.now() - generatedAt, totalMs: Date.now() - acceptedAt,
+    });
   } catch (e) {
     console.error(`[scan ${id}]`, e);
-    setJob(id, 'error', e instanceof Error ? e.message : 'Something went wrong.');
+    setJob(id, 'error', e instanceof Error ? scanErrorMessage(e.message) : 'Something went wrong.');
   } finally {
-    // Photos are only needed for the analysis; do not keep them.
+    // Photos are only needed to build the model; do not keep them.
     rmSync(dir, { recursive: true, force: true });
   }
 }
@@ -78,13 +108,8 @@ function requireToken(req: Request, res: Response, next: NextFunction) {
 }
 
 app.get('/api/health', (_req, res) => {
-  res.json({
-    ok: true,
-    vision: MOCK ? 'mock' : 'claude-code',
-    claudeFound: MOCK || Boolean(findClaude()),
-    blender: findBlender(),
-    needsToken: Boolean(TOKEN),
-  });
+  const worker = workerStatus();
+  res.json({ ok: true, worker: worker.state, workerError: scanErrorMessage(worker.error), views: SUPPORTED_VIEWS, needsToken: Boolean(TOKEN) });
 });
 
 app.get('/api/custom-products', (_req, res) => {
@@ -97,41 +122,42 @@ app.delete('/api/custom-products/:id', requireToken, (req, res) => {
 });
 
 app.post('/api/scans', requireToken, (req, res) => {
-  const body = req.body ?? {};
-  const sizeError = checkSize(body.size);
-  if (sizeError) {
-    res.status(400).json({ error: sizeError });
+  const parsed = parseScanRequest(req.body, SUPPORTED_VIEWS);
+  if (!parsed.ok) {
+    res.status(400).json({ error: parsed.error });
     return;
   }
-  const photos: unknown[] = Array.isArray(body.photos) ? body.photos : [];
-  if (photos.length < 2 || photos.length > ROLES.length) {
-    res.status(400).json({ error: `Send between 2 and ${ROLES.length} photos.` });
+  const worker = workerStatus();
+  if (worker.state === 'missing') {
+    res.status(503).json({ error: scanErrorMessage(worker.error) });
     return;
   }
+  const scan = parsed.value;
   const id = randomUUID();
   const dir = join(JOBS_DIR, id);
   mkdirSync(dir, { recursive: true });
-  const saved: Photo[] = [];
-  for (const p of photos as { role?: string; dataUrl?: string }[]) {
-    const role = ROLES.find((r) => r === p.role);
-    const match = typeof p.dataUrl === 'string' ? DATA_URL.exec(p.dataUrl) : null;
-    const bytes = match ? Buffer.from(match[2], 'base64') : null;
-    if (!role || !match || !bytes || bytes.length > MAX_PHOTO_BYTES || saved.some((s) => s.role === role)) {
-      rmSync(dir, { recursive: true, force: true });
-      res.status(400).json({ error: 'Each photo must be a JPEG, PNG or WebP under 6 MB with a different view.' });
-      return;
-    }
-    const file = `${role}.${match[1] === 'jpeg' ? 'jpg' : match[1]}`;
-    writeFileSync(join(dir, file), bytes);
-    saved.push({ role, file });
+  const images: GenerateRequest['images'] = {};
+  for (const p of scan.photos) {
+    const file = join(dir, `${p.view}.${p.ext}`);
+    writeFileSync(file, p.bytes);
+    images[p.view] = file;
   }
   setJob(id, 'queued', 'Waiting for the previous scan to finish…');
-  enqueue(() => runJob(id, saved, body.size as SizeM));
+  // Queued scans retain file paths, not potentially many MB of decoded upload buffers.
+  const details = { title: scan.title, heightM: scan.heightM };
+  const acceptedAt = Date.now();
+  enqueue(() => runJob(id, details, images, acceptedAt));
   res.status(202).json({ jobId: id });
 });
 
 app.get('/api/scans/:id', (req, res) => {
-  const job = jobs.get(String(req.params.id));
+  const id = String(req.params.id);
+  let job = jobs.get(id);
+  if (!job && /^[0-9a-f-]{36}$/.test(id)) {
+    const path = join(STATUS_DIR, `${id}.json`);
+    if (existsSync(path)) job = JSON.parse(readFileSync(path, 'utf8')) as Job;
+  }
+  if (job?.product && !existsSync(join(MODELS_DIR, `${job.product.id}.glb`))) job = undefined;
   if (!job) {
     res.status(404).json({ error: 'Unknown scan.' });
     return;
@@ -139,7 +165,15 @@ app.get('/api/scans/:id', (req, res) => {
   res.json(job);
 });
 
-app.use('/custom-models', express.static(MODELS_DIR, { maxAge: '1h' }));
+app.use(
+  '/custom-models',
+  express.static(MODELS_DIR, {
+    maxAge: '1h',
+    setHeaders: (res, path) => {
+      if (path.endsWith('.stl')) res.setHeader('Content-Type', 'model/stl');
+    },
+  }),
+);
 
 // Serve the built web app so the phone only needs this one address.
 const DIST = resolve(import.meta.dirname, '..', 'dist');
@@ -159,10 +193,28 @@ setInterval(() => {
   for (const [id, job] of jobs) if (job.updated < cutoff) jobs.delete(id);
 }, 10 * 60 * 1000).unref();
 
-app.listen(PORT, '0.0.0.0', () => {
+// The Hunyuan3D worker is not started here: it starts on the first scan and stops again after being
+// idle (server/hunyuan.ts), so the GPU model holds no RAM or VRAM while nobody is scanning.
+const server = app.listen(PORT, '0.0.0.0', () => {
   console.log(`Scan server on http://localhost:${PORT}`);
-  console.log(`  vision: ${MOCK ? 'MOCK (photos are not analysed)' : `Claude Code (${findClaude() ?? 'NOT FOUND'})`}`);
-  console.log(`  blender: ${findBlender()}`);
+  console.log(
+    `  3D: ${MOCK ? 'MOCK (placeholder boxes, photos are not used)' : `${MODEL} via ${pythonPath()} (starts on the first scan)`}`,
+  );
+  console.log(`  photos: ${SUPPORTED_VIEWS.join(', ')}`);
+  if (!MOCK && workerStatus().state === 'missing') console.log(`  ${workerStatus().error}`);
   console.log(`  web app: ${existsSync(DIST) ? DIST : 'not built (run npm run build)'}`);
   if (TOKEN) console.log('  passcode required for scans');
+});
+
+// Stop only our own Python child and free GPU memory when the server is stopped.
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.once(signal, () => {
+  server.close();
+  void shutdownWorker().finally(() => process.exit(0));
+});
+
+app.use((error: Error & { status?: number }, _req: Request, res: Response, _next: NextFunction) => {
+  const status = error.status ?? 500;
+  console.error(error);
+  res.status(status).json({ error: status === 413 ? 'Upload is too large. Resize photos to 1600 pixels and try again.' :
+    status === 400 ? 'The upload could not be read. Try again.' : 'The scan server could not save or read this scan. Try again.' });
 });

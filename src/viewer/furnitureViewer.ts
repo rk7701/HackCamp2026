@@ -18,8 +18,8 @@ export class FurnitureViewer {
     el.setAttribute('ar', '');
     // Quick Look only: the target is Safari on iPhone/iPad.
     el.setAttribute('ar-modes', 'quick-look');
-    // Fixed scale: pinch must not resize the furniture in the room.
-    el.setAttribute('ar-scale', 'fixed');
+    // Start at the model's measured size; allow pinch-to-resize in iOS Quick Look.
+    el.setAttribute('ar-scale', 'auto');
     el.setAttribute('shadow-intensity', '1');
     el.setAttribute('touch-action', 'pan-y');
     el.setAttribute('interaction-prompt', 'none');

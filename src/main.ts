@@ -352,15 +352,32 @@ function renderProductInfo() {
   if (p.custom) {
     const text = document.createElement('span');
     text.textContent =
-      `Built from your photos in ${describeColors(p, choicesFor(p.id))}, scaled to your measurements: ` +
+      `Built from your photos in ${describeColors(p, choicesFor(p.id))}, scaled to the height you entered: ` +
       `${formatLength(p.size.width, u)} wide, ${formatLength(p.size.depth, u)} deep, ${formatLength(p.size.height, u)} high. ` +
       (p.custom.notes ? `${p.custom.notes} ` : '');
+    els.productInfo.append(text);
+    if (p.custom.stlUrl) {
+      const stl = document.createElement('a');
+      stl.href = p.custom.stlUrl;
+      stl.download = `${p.label}.stl`;
+      stl.textContent = 'Download STL';
+      els.productInfo.append(stl, ' ');
+    }
     const remove = document.createElement('button');
     remove.type = 'button';
     remove.className = 'link-button';
-    remove.textContent = 'Remove from My furniture';
-    remove.addEventListener('click', () => void removeCustom(p));
-    els.productInfo.append(text, remove);
+    remove.textContent = 'Delete from My furniture';
+    remove.addEventListener('click', async () => {
+      remove.disabled = true;
+      try {
+        await removeCustom(p);
+      } catch (e) {
+        setStatus(e instanceof Error ? e.message : 'Could not delete this furniture. Try again.', 'error');
+      } finally {
+        remove.disabled = false;
+      }
+    });
+    els.productInfo.append(remove);
     return;
   }
   const sized = document.createElement('span');
@@ -553,7 +570,11 @@ function openGalleryItem(item: GalleryItem) {
   setMode('template');
 }
 
-const shell = initShell(openGalleryItem);
+const shell = initShell(openGalleryItem, async (item) => {
+  if (item.source.kind !== 'product') return;
+  const product = getProduct(item.source.productId);
+  if (product?.custom) await removeCustom(product);
+});
 
 // ---------- Room planner ----------
 
@@ -645,19 +666,27 @@ async function loadCustomProducts() {
 }
 
 async function removeCustom(p: Product) {
-  if (!confirm(`Remove "${p.label}" from My furniture? This deletes its model.`)) return;
+  if (!p.custom) return;
+  if (!confirm(`Delete "${p.label}" from My furniture? This permanently deletes its saved model and STL and removes it from your room plan.`)) return;
   const headers: Record<string, string> = {};
   try {
     headers['x-scan-token'] = localStorage.getItem('scan-token') ?? '';
   } catch {
     /* ignore */
   }
-  const res = await fetch(`api/custom-products/${encodeURIComponent(p.id)}`, { method: 'DELETE', headers });
+  let res: Response;
+  try {
+    res = await fetch(`api/custom-products/${encodeURIComponent(p.id)}`, { method: 'DELETE', headers });
+  } catch {
+    throw new Error('Could not reach the scan server. Check your connection and try again.');
+  }
   if (!res.ok && res.status !== 404) {
-    setStatus('Could not remove it. Check the scan passcode.', 'error');
-    return;
+    throw new Error(res.status === 401 ? 'Could not delete it. Check the scan passcode.' : 'Could not delete this furniture. Try again.');
   }
   setCustomProducts(allProducts().filter((x) => x.custom && x.id !== p.id));
+  room.removeProduct(p.id);
+  delete state.colorChoices[p.id];
+  if (state.productId === p.id) setMode('template');
   catalogueChanged();
   shell.navigate('home');
 }

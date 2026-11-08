@@ -6,3 +6,10 @@ debug.log
 server/data
 .env
 .env.*
+
+# Hunyuan3D worker
+hunyuan/.venv
+__pycache__
+
+# Local scratch output (test runs, verification artifacts)
+tmp/
