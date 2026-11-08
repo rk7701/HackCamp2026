@@ -13,24 +13,26 @@ import {
 } from './domain/dimensions';
 import { checkFit } from './domain/fit';
 import { TEMPLATES, TEMPLATE_IDS, type TemplateId } from './catalog/templates';
+import { galleryItems, type GalleryItem } from './catalog/gallery';
 import { buildTemplate, disposeGroup } from './models/buildTemplate';
 import { exportGlb, ObjectUrlPool } from './models/exportGlb';
-import { SCANS, resolveScan, type ScanAsset } from './models/scanCatalog';
 import {
-  BRANDS,
-  FURNITURE_TYPES,
-  MY_FURNITURE,
   allProducts,
   describeColors,
-  filterProducts,
   getProduct,
   resolveColors,
   setCustomProducts,
   type ColorChoices,
   type Product,
 } from './models/productCatalog';
+import { RoomPlanner, type AddRequest } from './room/roomPlanner';
+import type { RoomItem } from './room/roomPlan';
 import { ScanFlow } from './scan/scanFlow';
+import { initShell } from './shell';
 import { FurnitureViewer } from './viewer/furnitureViewer';
+
+/** A GLB the user imported on the Scan page. Lives only in this tab. */
+type ImportedModel = { id: string; label: string; glbUrl: string; measuredSize: DimensionsM };
 
 type FurnitureSource =
   | { kind: 'template'; templateId: TemplateId; size: DimensionsM }
@@ -55,16 +57,16 @@ const els = {
   resetDims: $<HTMLButtonElement>('reset-dims'),
   resetView: $<HTMLButtonElement>('reset-view'),
   productPanel: $('product-panel'),
-  productSearch: $<HTMLInputElement>('product-search'),
-  addOwn: $<HTMLButtonElement>('add-own'),
-  brandFilter: $<HTMLSelectElement>('brand-filter'),
-  typeFilter: $<HTMLSelectElement>('type-filter'),
-  productCount: $('product-count'),
-  productList: $('product-list'),
+  productTitle: $('product-title'),
+  productBrand: $('product-brand'),
   productInfo: $('product-info'),
   productColors: $('product-colors'),
   scanPanel: $('scan-panel'),
   scanInfo: $('scan-info'),
+  sourceScanLabel: $('source-scan-label'),
+  addOwn: $<HTMLButtonElement>('add-own'),
+  addToRoom: $<HTMLButtonElement>('add-to-room'),
+  addToRoomStatus: $('add-to-room-status'),
   gapFields: $('gap-fields'),
   gapRotate: $<HTMLInputElement>('gap-rotate'),
   fitResult: $('fit-result'),
@@ -76,7 +78,7 @@ const DEBOUNCE_MS = 350;
 
 const state = {
   mode: 'template' as Mode,
-  templateId: 'table' as TemplateId,
+  templateId: 'sofa' as TemplateId,
   productId: allProducts()[0].id,
   /** Chosen colour option per product and part. */
   colorChoices: {} as Record<string, ColorChoices>,
@@ -88,28 +90,30 @@ const state = {
   inputsValid: true,
   /** What the viewer is currently displaying (always a valid model). */
   shown: null as FurnitureSource | null,
-  scan: null as ScanAsset | null,
+  scan: null as ImportedModel | null,
 };
 
 // ---------- Form fields ----------
 
-type Field = { input: HTMLInputElement; error: HTMLElement; unit: HTMLElement };
+type Field = { input: HTMLInputElement; error: HTMLElement; unit: HTMLElement; label: HTMLElement };
 
 function makeField(container: HTMLElement, id: string, label: string): Field {
   const wrap = document.createElement('div');
   wrap.className = 'field';
   wrap.innerHTML = `
-    <label class="field-label" for="${id}">${label}</label>
+    <label class="field-label" for="${id}"></label>
     <div class="input-row">
       <input type="text" inputmode="decimal" autocomplete="off" id="${id}" aria-describedby="${id}-error" />
       <span class="unit"></span>
     </div>
     <p class="field-error" id="${id}-error"></p>`;
+  wrap.querySelector('label')!.textContent = label;
   container.append(wrap);
   return {
     input: wrap.querySelector('input')!,
     error: wrap.querySelector('.field-error')!,
     unit: wrap.querySelector('.unit')!,
+    label: wrap.querySelector('label')!,
   };
 }
 
@@ -135,8 +139,13 @@ function setFieldError(f: Field, message: string | null) {
   f.input.setAttribute('aria-invalid', message ? 'true' : 'false');
 }
 
+function dimLabel(k: DimensionKey) {
+  return TEMPLATES[state.templateId]?.labels?.[k] ?? LABELS[k];
+}
+
 function fillDims(size: DimensionsM) {
   for (const k of DIMENSION_KEYS) {
+    dimFields[k].label.textContent = dimLabel(k);
     dimFields[k].input.value = inputValue(size[k], state.unit);
     setFieldError(dimFields[k], null);
   }
@@ -148,7 +157,7 @@ function readDims(): DimensionsM | null {
   const out: Partial<DimensionsM> = {};
   let ok = true;
   for (const k of DIMENSION_KEYS) {
-    const r = parseLength(dimFields[k].input.value, state.unit, ranges[k], LABELS[k]);
+    const r = parseLength(dimFields[k].input.value, state.unit, ranges[k], dimLabel(k));
     setFieldError(dimFields[k], r.ok ? null : r.error);
     if (r.ok) out[k] = r.meters;
     else ok = false;
@@ -169,19 +178,21 @@ function shownSize(): DimensionsM | null {
   return s.kind === 'scan' ? s.measuredSize : s.size;
 }
 
-/** AR may launch only when the loaded model is exactly what the user selected. */
-function updateArAvailability() {
+/** True when the loaded model is exactly what the user selected (AR and "add to room" use it). */
+function shownMatchesSelection(): boolean {
   const s = state.shown;
-  const matches =
-    !!s &&
-    (state.mode === 'template'
-      ? s.kind === 'template' && s.templateId === state.templateId && state.inputsValid
-      : state.mode === 'product'
-        ? s.kind === 'product' && s.productId === state.productId
-        : s.kind === 'scan');
-  els.arButton.disabled = state.busy || !matches;
+  if (!s) return false;
+  if (state.mode === 'template') return s.kind === 'template' && s.templateId === state.templateId && state.inputsValid;
+  if (state.mode === 'product') return s.kind === 'product' && s.productId === state.productId;
+  return s.kind === 'scan' && s.assetId === state.scan?.id;
+}
+
+function updateArAvailability() {
+  const ok = !state.busy && shownMatchesSelection();
+  els.arButton.disabled = !ok;
   els.arButton.hidden = !viewer.canActivateAR;
   els.arNote.hidden = state.shown === null || viewer.canActivateAR;
+  els.addToRoom.disabled = !ok;
 }
 
 function setBusy(busy: boolean, text?: string) {
@@ -251,11 +262,11 @@ async function showTemplate(templateId: TemplateId, size: DimensionsM) {
   renderShown();
 }
 
-/** Show a pre-built model file (a popular product or a scan). */
-async function showFile(file: { glbUrl: string; usdzUrl?: string }, source: FurnitureSource, what: string) {
+/** Show a pre-built model file (a catalogue product or an imported model). */
+async function showFile(glbUrl: string, source: FurnitureSource, what: string) {
   const rev = ++state.revision;
   setBusy(true, `Loading ${what}…`);
-  const result = await viewer.show({ glbUrl: file.glbUrl, usdzUrl: file.usdzUrl, revision: rev });
+  const result = await viewer.show({ glbUrl, revision: rev });
   if (result === 'superseded') return;
   if (result === 'error') {
     setBusy(false);
@@ -268,14 +279,14 @@ async function showFile(file: { glbUrl: string; usdzUrl?: string }, source: Furn
   renderShown();
 }
 
-function showScan(scan: ScanAsset) {
-  return showFile(scan, { kind: 'scan', assetId: scan.id, measuredSize: scan.measuredSize }, 'sample scan');
+function showImported(scan: ImportedModel) {
+  return showFile(scan.glbUrl, { kind: 'scan', assetId: scan.id, measuredSize: scan.measuredSize }, 'imported model');
 }
 
 async function showProduct(p: Product) {
   renderProductColors();
   renderProductInfo();
-  await showFile(p, { kind: 'product', productId: p.id, size: p.size }, 'model');
+  await showFile(p.glbUrl, { kind: 'product', productId: p.id, size: p.size }, 'model');
   applyProductColors();
 }
 
@@ -335,6 +346,8 @@ function renderProductInfo() {
   const p = getProduct(state.productId);
   if (!p) return;
   const u = state.unit;
+  els.productTitle.textContent = p.label;
+  els.productBrand.textContent = `${p.brand} · ${p.type}`;
   els.productInfo.innerHTML = '';
   if (p.custom) {
     const text = document.createElement('span');
@@ -361,6 +374,19 @@ function renderProductInfo() {
   link.rel = 'noopener';
   link.textContent = 'Dimension source';
   els.productInfo.append(sized, link);
+}
+
+function renderScanInfo() {
+  const scan = state.scan;
+  if (!scan) {
+    els.scanInfo.textContent = 'No model is imported yet. Use the Scan page to build one from photos or import a GLB.';
+    return;
+  }
+  const m = scan.measuredSize;
+  const u = state.unit;
+  els.scanInfo.textContent =
+    `${scan.label}. Entered measurements: ` +
+    `${formatLength(m.width, u)} wide, ${formatLength(m.depth, u)} deep and ${formatLength(m.height, u)} high.`;
 }
 
 let debounce: number | undefined;
@@ -421,15 +447,18 @@ function updateFit() {
   els.fitResult.className = `fit-result ${result.status}`;
 }
 
-// ---------- Event wiring ----------
+// ---------- Template and size controls ----------
 
-for (const id of TEMPLATE_IDS) {
-  els.templateSelect.add(new Option(TEMPLATES[id].label, id));
+for (const id of TEMPLATE_IDS) els.templateSelect.add(new Option(TEMPLATES[id].label, id));
+
+function selectTemplate(id: TemplateId, size?: DimensionsM) {
+  state.templateId = id;
+  els.templateSelect.value = id;
+  fillDims(size ?? TEMPLATES[id].defaults);
 }
 
 els.templateSelect.addEventListener('change', () => {
-  state.templateId = els.templateSelect.value as TemplateId;
-  fillDims(TEMPLATES[state.templateId].defaults);
+  selectTemplate(els.templateSelect.value);
   applyTemplateNow();
 });
 
@@ -442,7 +471,7 @@ for (const k of DIMENSION_KEYS) {
   dimFields[k].input.addEventListener('input', scheduleApply);
   dimFields[k].input.addEventListener('change', applyTemplateNow);
 }
-document.getElementById('dims-form')!.addEventListener('submit', (e) => {
+$('dims-form').addEventListener('submit', (e) => {
   e.preventDefault();
   applyTemplateNow();
 });
@@ -464,27 +493,32 @@ function setUnit(next: Unit) {
   renderShown();
   renderScanInfo();
   renderProductInfo();
+  room.refresh();
 }
 
 document.querySelectorAll<HTMLInputElement>('input[name="unit"]').forEach((r) =>
   r.addEventListener('change', () => r.checked && setUnit(r.value as Unit)),
 );
 
+function checkSource(mode: Mode) {
+  document.querySelector<HTMLInputElement>(`input[name="source"][value="${mode}"]`)!.checked = true;
+}
+
 function setMode(mode: Mode) {
+  window.clearTimeout(debounce);
   state.mode = mode;
+  checkSource(mode);
   els.templatePanel.hidden = mode !== 'template';
-  els.productPanel.hidden = mode !== 'product';
   els.scanPanel.hidden = mode !== 'scan';
+  els.productPanel.hidden = mode !== 'product';
+  els.addToRoomStatus.textContent = '';
   if (mode === 'template') {
     applyTemplateNow();
   } else if (mode === 'product') {
-    void showProduct(getProduct(state.productId)!);
+    const product = getProduct(state.productId);
+    if (product) void showProduct(product);
   } else if (state.scan) {
-    void showScan(state.scan);
-  } else {
-    state.revision++; // Drop any in-flight template result.
-    setBusy(false);
-    setStatus('No sample scan is bundled yet.', 'error');
+    void showImported(state.scan);
   }
 }
 
@@ -494,85 +528,116 @@ document.querySelectorAll<HTMLInputElement>('input[name="source"]').forEach((r) 
 
 els.resetView.addEventListener('click', () => viewer.resetView());
 
-/** Fill a filter <select> with the values present in the catalogue, keeping the current choice. */
-function fillFilter(select: HTMLSelectElement, allLabel: string, values: string[]) {
-  const current = select.value;
-  select.replaceChildren(new Option(allLabel, ''), ...values.map((v) => new Option(v, v)));
-  select.value = values.includes(current) ? current : '';
-}
-
-function refreshFilters() {
-  const present = allProducts();
-  const brands = [MY_FURNITURE, ...BRANDS].filter((b) => present.some((p) => p.brand === b));
-  const types = FURNITURE_TYPES.filter((t) => present.some((p) => p.type === t));
-  fillFilter(els.brandFilter, 'All brands', brands);
-  fillFilter(els.typeFilter, 'All types', [...types]);
-}
-refreshFilters();
-
-/** Rebuild the product list from the search box and filters. Does not load a model by itself. */
-function renderProductList() {
-  const all = allProducts();
-  const results = filterProducts(all, {
-    brand: els.brandFilter.value,
-    type: els.typeFilter.value,
-    query: els.productSearch.value,
+els.arButton.addEventListener('click', () => {
+  if (els.arButton.disabled) return;
+  viewer.activateAR().catch((err) => {
+    console.error(err);
+    setStatus('AR could not start. Try again in Safari on an iPhone or iPad.', 'error');
   });
-  els.productCount.textContent =
-    results.length === all.length ? `${results.length} products` : `${results.length} of ${all.length} products`;
-  els.productList.innerHTML = '';
-  if (!results.length) {
-    const li = document.createElement('li');
-    li.className = 'product-empty';
-    li.textContent = 'No products match. Try another search or clear the filters.';
-    els.productList.append(li);
+});
+
+viewer.el.addEventListener('ar-status', (e) => {
+  const status = (e as CustomEvent<{ status: string }>).detail?.status;
+  if (status === 'failed') setStatus('AR could not start. Try again in Safari on an iPhone or iPad.', 'error');
+});
+
+// ---------- Gallery and navigation (Home / Scan / View / Room) ----------
+
+function openGalleryItem(item: GalleryItem) {
+  if (item.source.kind === 'product') {
+    state.productId = item.source.productId;
+    setMode('product');
     return;
   }
-  for (const p of results) {
-    const li = document.createElement('li');
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.dataset.id = p.id;
-    button.setAttribute('aria-pressed', String(p.id === state.productId));
-    const name = document.createElement('span');
-    name.className = 'product-name';
-    name.textContent = p.label;
-    const meta = document.createElement('span');
-    meta.className = 'product-meta';
-    meta.textContent = p.custom ? `${p.type} · built from your photos` : `${p.type} · sized like ${p.sizedLike}`;
-    button.append(name, meta);
-    button.addEventListener('click', () => selectProduct(p.id));
-    li.append(button);
-    els.productList.append(li);
-  }
+  selectTemplate(item.source.templateId);
+  setMode('template');
 }
 
-function selectProduct(id: string) {
-  if (id === state.productId && state.shown?.kind === 'product' && state.shown.productId === id) return;
-  state.productId = id;
-  for (const b of els.productList.querySelectorAll<HTMLButtonElement>('button[data-id]')) {
-    b.setAttribute('aria-pressed', String(b.dataset.id === id));
+const shell = initShell(openGalleryItem);
+
+// ---------- Room planner ----------
+
+/** What "Add to my room plan" adds: exactly the model on screen, at its size and colours. */
+function currentAddRequest(): AddRequest | null {
+  const s = state.shown;
+  if (!s || !shownMatchesSelection()) return null;
+  if (s.kind === 'template') {
+    const t = TEMPLATES[s.templateId];
+    return { label: t.label, type: t.type, ref: { kind: 'template', templateId: s.templateId }, size: s.size };
   }
-  void showProduct(getProduct(id)!);
+  if (s.kind === 'product') {
+    const p = getProduct(s.productId)!;
+    return { label: p.label, type: p.type, ref: { kind: 'product', productId: p.id, colors: { ...choicesFor(p.id) } }, size: p.size };
+  }
+  return { label: state.scan!.label, type: 'Other', ref: { kind: 'import', glbUrl: state.scan!.glbUrl }, size: s.measuredSize };
 }
+
+const room = new RoomPlanner({
+  unit: () => state.unit,
+  options: () =>
+    galleryItems().map((item) => ({
+      id: item.id,
+      label: item.name,
+      group: item.brand,
+      make: (): AddRequest => {
+        if (item.source.kind === 'template') {
+          const t = TEMPLATES[item.source.templateId];
+          return { label: t.label, type: t.type, ref: { kind: 'template', templateId: t.id }, size: t.defaults };
+        }
+        const p = getProduct(item.source.productId)!;
+        return { label: p.label, type: p.type, ref: { kind: 'product', productId: p.id, colors: { ...choicesFor(p.id) } }, size: p.size };
+      },
+    })),
+  onOpenItem: (item: RoomItem) => {
+    if (item.ref.kind === 'template') {
+      selectTemplate(item.ref.templateId, item.size);
+      setMode('template');
+    } else if (item.ref.kind === 'product') {
+      state.productId = item.ref.productId;
+      state.colorChoices[item.ref.productId] = { ...item.ref.colors };
+      setMode('product');
+    }
+    shell.navigate('view');
+  },
+});
+
+els.addToRoom.addEventListener('click', () => {
+  const req = currentAddRequest();
+  if (!req) return;
+  room.add(req);
+  els.addToRoomStatus.innerHTML = '';
+  const text = document.createTextNode(`Added. Your room plan has ${room.count()} piece${room.count() > 1 ? 's' : ''}. `);
+  const link = document.createElement('a');
+  link.href = '#room';
+  link.className = 'text-link';
+  link.textContent = 'Arrange it';
+  els.addToRoomStatus.append(text, link);
+});
+
+shell.onPage((page) => {
+  if (page === 'room') room.refresh();
+});
 
 // ---------- My furniture (built from photos by the scan server) ----------
+
+function catalogueChanged() {
+  shell.refresh();
+  room.refresh();
+}
 
 async function loadCustomProducts() {
   try {
     const res = await fetch('api/custom-products');
     if (!res.ok) return;
     setCustomProducts((await res.json()) as Product[]);
-    refreshFilters();
-    renderProductList();
+    catalogueChanged();
     // A deep link to a My furniture item can only be opened once the list has arrived.
     const q = new URLSearchParams(location.search);
     const linked = getProduct(q.get('product') ?? '');
-    if (q.get('source') === 'product' && linked?.custom && state.shown?.kind !== 'product') {
+    if (linked?.custom && state.shown?.kind !== 'product') {
       state.productId = linked.id;
-      document.querySelector<HTMLInputElement>('input[name="source"][value="product"]')!.checked = true;
       setMode('product');
-      renderProductList();
+      shell.navigate('view');
     }
   } catch {
     /* No scan server (e.g. static hosting): the built-in catalogue still works. */
@@ -593,93 +658,106 @@ async function removeCustom(p: Product) {
     return;
   }
   setCustomProducts(allProducts().filter((x) => x.custom && x.id !== p.id));
-  refreshFilters();
-  renderProductList();
-  selectProduct(allProducts()[0].id);
+  catalogueChanged();
+  shell.navigate('home');
 }
 
 const scanFlow = new ScanFlow({
   unit: () => state.unit,
   onAdded: (product) => {
     setCustomProducts([product, ...allProducts().filter((x) => x.custom && x.id !== product.id)]);
-    refreshFilters();
-    els.brandFilter.value = '';
-    els.typeFilter.value = '';
-    els.productSearch.value = '';
-    renderProductList();
-    if (state.mode !== 'product') {
-      document.querySelector<HTMLInputElement>('input[name="source"][value="product"]')!.checked = true;
-      state.productId = product.id;
-      setMode('product');
-    } else {
-      selectProduct(product.id);
-    }
+    catalogueChanged();
+    state.productId = product.id;
+    setMode('product');
+    shell.navigate('view');
   },
 });
 els.addOwn.addEventListener('click', () => void scanFlow.open());
-// Opening the app at #add goes straight to the scanner (handy for a QR code).
-if (location.hash === '#add') void scanFlow.open();
 
-els.productSearch.addEventListener('input', renderProductList);
-els.brandFilter.addEventListener('change', renderProductList);
-els.typeFilter.addEventListener('change', renderProductList);
-renderProductList();
+// ---------- Import a GLB from a scanning app ----------
 
-els.arButton.addEventListener('click', () => {
-  if (els.arButton.disabled) return;
-  viewer.activateAR().catch((err) => {
-    console.error(err);
-    setStatus('AR could not start. Try again, or switch to the sample scan.', 'error');
-  });
+const importUrls = new ObjectUrlPool();
+const modelFile = $<HTMLInputElement>('model-file');
+const importStatus = $('import-status');
+const importButton = $<HTMLButtonElement>('import-button');
+modelFile.addEventListener('change', () => {
+  $('model-file-label').textContent = modelFile.files?.[0]?.name ?? 'GLB file from your 3D scanning app';
+  importStatus.textContent = '';
 });
 
-viewer.el.addEventListener('ar-status', (e) => {
-  const status = (e as CustomEvent<{ status: string }>).detail?.status;
-  if (status === 'failed') {
-    setStatus('AR could not start. Try again, or switch to the sample scan.', 'error');
+$<HTMLFormElement>('import-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  void importModel();
+});
+
+async function importModel() {
+  const file = modelFile.files?.[0];
+  if (!file) return;
+  const size: Partial<DimensionsM> = {};
+  for (const key of DIMENSION_KEYS) {
+    const field = $<HTMLInputElement>(`import-${key}`);
+    const result = parseLength(field.value, 'cm', { min: 0.01, max: 20 }, LABELS[key]);
+    field.setAttribute('aria-invalid', String(!result.ok));
+    if (!result.ok) {
+      importStatus.textContent = result.error;
+      field.focus();
+      return;
+    }
+    size[key] = result.meters;
+  }
+  importButton.disabled = true;
+  try {
+    // A missing/invalid GLB header should not replace the user's current model.
+    const header = await file.slice(0, 12).arrayBuffer();
+    if (header.byteLength < 12) throw new Error('Choose a valid GLB model exported by your scanning app.');
+    const data = new DataView(header);
+    if (data.getUint32(0, true) !== 0x46546c67 || data.getUint32(4, true) !== 2 || data.getUint32(8, true) !== file.size) {
+      throw new Error('This file is not a valid GLB 2.0 model. Export it as GLB and try again.');
+    }
+    const glbUrl = importUrls.create(file);
+    state.scan = { id: `imported-${Date.now()}`, label: file.name.replace(/\.glb$/i, ''), glbUrl, measuredSize: size as DimensionsM };
+    els.sourceScanLabel.hidden = false;
+    renderScanInfo();
+    setMode('scan');
+    importStatus.textContent = '';
+    shell.navigate('view');
+  } catch (error) {
+    importStatus.textContent = error instanceof Error ? error.message : 'This model could not be opened.';
+  } finally {
+    importButton.disabled = false;
+  }
+}
+
+window.addEventListener('pagehide', (event) => {
+  if (!event.persisted) {
+    urls.revokeAllExcept(null);
+    importUrls.revokeAllExcept(null);
   }
 });
 
 // ---------- Start ----------
 
-void loadCustomProducts();
-
 for (const f of allFields) f.unit.textContent = state.unit;
-fillDims(TEMPLATES[state.templateId].defaults);
-// Deep links: ?source=product&product=<id>[&colors=i,j] opens a popular product directly.
+renderScanInfo();
+selectTemplate(state.templateId);
+
+// Deep links: ?product=<id>[&colors=i,j] opens a catalogue product; #add opens the photo scanner.
 const params = new URLSearchParams(location.search);
 const linkedProduct = getProduct(params.get('product') ?? '');
-if (params.get('source') === 'product' && linkedProduct) {
+if (linkedProduct) {
   state.productId = linkedProduct.id;
-  renderProductList();
-  // &colors=1,3 picks option indexes for each colour part in order.
   const picks = (params.get('colors') ?? '').split(',').map(Number);
   linkedProduct.colorParts.forEach((part, i) => {
     if (Number.isInteger(picks[i]) && part.options[picks[i]]) choicesFor(linkedProduct.id)[part.label] = picks[i];
   });
-  document.querySelector<HTMLInputElement>('input[name="source"][value="product"]')!.checked = true;
   setMode('product');
+  shell.navigate('view');
 } else {
-  applyTemplateNow();
+  setMode('template');
+}
+if (location.hash === '#add') {
+  shell.navigate('scan');
+  void scanFlow.open();
 }
 
-function renderScanInfo() {
-  const scan = state.scan;
-  if (!scan) {
-    els.scanInfo.textContent =
-      'No sample scan has been added to this site yet. Add sample-scan.glb (and optionally sample-scan.usdz) to public/models/.';
-    return;
-  }
-  const m = scan.measuredSize;
-  const u = state.unit;
-  els.scanInfo.textContent =
-    `${scan.label}: a real piece captured with a 3D scanner. Checked with a tape measure at ` +
-    `${formatLength(m.width, u)} wide, ${formatLength(m.depth, u)} deep and ${formatLength(m.height, u)} high.`;
-}
-
-renderScanInfo();
-void resolveScan(SCANS[0]).then((scan) => {
-  state.scan = scan;
-  renderScanInfo();
-  if (state.mode === 'scan') setMode('scan');
-});
+void loadCustomProducts();

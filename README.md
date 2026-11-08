@@ -3,6 +3,25 @@
 Enter a piece of furniture's dimensions, inspect it in 3D, and place it at real size in your room
 with AR Quick Look (Safari on iPhone/iPad). Static site: no backend, accounts or API keys.
 
+The mobile layout (by Nikshoy) has Home, Scan, View and Room pages:
+
+- **Home**: a gallery with rendered thumbnails, a scrollable brand row (My furniture, IKEA, Article,
+  West Elm, Structube, Templates) with per-brand category dropdowns, and a search dropdown with
+  furniture-type checkboxes.
+- **Scan**: build a model from a few photos (see "Add your own furniture" below) or import a GLB
+  from a scanning app. Imported GLBs stay in the browser tab.
+- **View**: edit a template's size or pick a product's colours, check a gap, view it in AR, and
+  add it to the room plan.
+- **Room**: enter an empty room's width and length, add several pieces, drag them on a floor plan
+  (arrow keys nudge, R turns), see overlaps and pieces past a wall, auto-arrange, then preview the
+  whole arrangement in 3D and AR. A green outline in the model marks the room's walls. The plan is
+  saved in this browser.
+
+There are 15 editable templates (sofa, sectional, armchair, coffee and side tables, dining table,
+round table, dining chair, desk, bed, nightstand, dresser, wardrobe, TV stand, bookshelf) plus 20
+look-alike models sized like popular retail products. These are generic models, not official
+product assets; each links to its dimension source.
+
 ## Develop (Windows)
 
 ```sh
@@ -18,12 +37,12 @@ AR needs HTTPS, so test on the phone by deploying `dist/` to an HTTPS static hos
 ## How it works
 
 - `src/domain/dimensions.ts` parses cm/in input, stores meters, validates ranges.
-- `src/catalog/templates.ts` defines the Table and Bookshelf templates (defaults, ranges, shape params).
+- `src/catalog/templates.ts` defines the 15 templates (type, defaults, ranges, shape params); `src/models/buildTemplate.ts` has a builder per shape.
+- `src/room/` holds the room planner: `roomPlan.ts` (footprints, overlaps, auto-arrange), `roomPlanner.ts` (UI) and `roomScene.ts` (combined GLB).
 - `src/models/buildTemplate.ts` builds the Three.js group (X width, Y height, Z depth, centered, floor at Y = 0) and checks its bounding box.
 - `src/models/exportGlb.ts` exports only the furniture as GLB and manages object URLs.
 - `src/viewer/furnitureViewer.ts` configures `<model-viewer>` with `ar-modes="quick-look"` and `ar-scale="fixed"`; sets `ios-src` only for scans so templates get a freshly generated USDZ.
 - `src/domain/fit.ts` compares a measured gap with the footprint (with a 90° turn option).
-- `src/models/scanCatalog.ts` lists bundled scans; see `public/models/README.md` to add one.
 
 Each edit creates a new revision; stale exports/loads are discarded and AR is disabled until the
 shown model matches the inputs.
